@@ -4,30 +4,44 @@ import requests
 from datetime import datetime, timedelta, timezone
 
 # --- CONFIGURAÇÃO VISUAL ---
-st.set_page_config(page_title="Radar VIP - Agência Pro", layout="wide")
+st.set_page_config(page_title="Radar VIP - Dashboard Profissional", layout="wide")
 st.markdown("""<style>.stApp { background-color: #0b0e14; } .stDataFrame { background-color: #161a23; } h1 { color: #f1c40f !important; text-align: center; font-weight: 800; } .stButton>button { background: linear-gradient(90deg, #f39c12, #e67e22); color: white; font-weight: bold; width: 100%; border-radius: 8px; height: 50px; }</style>""", unsafe_allow_html=True)
 
 st.title("🎯 MASTER RADAR VIP: EDIÇÃO AGÊNCIA")
 status = st.empty()
 
-# --- DICIONÁRIO DE TRADUÇÃO DE PAÍSES ---
-TRADUCAO_PAISES = {
-    "Brazil": "Brasil", "Germany": "Alemanha", "England": "Inglaterra", "Spain": "Espanha",
-    "Italy": "Itália", "France": "França", "Portugal": "Portugal", "Netherlands": "Holanda",
+# --- DICIONÁRIO DE TRADUÇÃO E CATEGORIZAÇÃO ---
+TRADUCAO = {
+    "Germany": "Alemanha", "England": "Inglaterra", "Spain": "Espanha", "Italy": "Itália",
+    "France": "França", "Portugal": "Portugal", "Netherlands": "Holanda", "Brazil": "Brasil",
     "Argentina": "Argentina", "Uruguay": "Uruguai", "Mexico": "México", "USA": "EUA",
     "Saudi Arabia": "Arábia Saudita", "Japan": "Japão", "South Korea": "Coreia do Sul",
     "Norway": "Noruega", "Sweden": "Suécia", "Finland": "Finlândia", "Greece": "Grécia",
-    "Scotland": "Escócia", "Austria": "Áustria", "Switzerland": "Suíça", "China": "China"
+    "Scotland": "Escócia", "Austria": "Áustria", "Switzerland": "Suíça", "China": "China",
+    "Belgium": "Bélgica", "Turkey": "Turquia", "Denmark": "Dinamarca", "Poland": "Polônia"
 }
 
-def traduzir_liga_e_pais(sport_title):
-    # Se tiver " - ", separa Liga e País
+CONTINENTAIS = {
+    "uefa": "Europa 🇪🇺", "conmebol": "América do Sul 🌎", "afc": "Ásia 🌏", 
+    "caf": "África 🌍", "concacaf": "América do Norte 🌎", "champions": "Elite Continental",
+    "libertadores": "Libertadores 🏆", "sudamericana": "Sul-Americana 🏆"
+}
+
+def identificar_origem(sport_title):
+    title_low = sport_title.lower()
+    
+    # Verifica se é Continental
+    for chave, nome in CONTINENTAIS.items():
+        if chave in title_low:
+            return sport_title, f"Torneio {nome}"
+    
+    # Se tiver " - ", tenta traduzir o país
     if " - " in sport_title:
         liga, pais_en = sport_title.split(" - ", 1)
-        pais_pt = TRADUCAO_PAISES.get(pais_en, pais_en)
+        pais_pt = TRADUCAO.get(pais_en, pais_en)
         return liga, pais_pt
-    # Se não tiver, é continental ou especial
-    return sport_title, None
+    
+    return sport_title, "Internacional"
 
 # --- FUNÇÃO SECRETS ---
 def get_secret(key, default=""):
@@ -38,11 +52,8 @@ def get_secret(key, default=""):
 with st.sidebar:
     st.markdown("### 🔑 Chaves de Acesso")
     opcao_api = st.selectbox("Escolher conta da API:", ["Conta 1", "Conta 2", "Conta 3", "Conta 4"])
-    
-    # Mapeamento das 4 contas
     api_map = {"Conta 1": "api_key_1", "Conta 2": "api_key_2", "Conta 3": "api_key_3", "Conta 4": "api_key_4"}
-    api_key_padrao = get_secret(api_map[opcao_api])
-    api_key = st.text_input(f"Chave {opcao_api}:", value=api_key_padrao, type="password")
+    api_key = st.text_input(f"Chave {opcao_api}:", value=get_secret(api_map[opcao_api]), type="password")
     
     st.markdown("---")
     st.markdown("### 📅 Filtros")
@@ -50,8 +61,8 @@ with st.sidebar:
     
     col1, col2 = st.columns(2)
     with col1: min_f = st.number_input("Min Fav", value=1.25, step=0.05)
-    with col2: max_f = st.number_input("Max Fav", value=1.55, step=0.05)
-    min_z = st.number_input("Min Zebra", value=4.50, step=0.10)
+    with col2: max_f = st.number_input("Max Fav", value=1.75, step=0.05)
+    min_z = st.number_input("Min Zebra", value=3.50, step=0.10)
     
     st.markdown("---")
     st.markdown("### ✈️ Telegram")
@@ -60,10 +71,8 @@ with st.sidebar:
     
     btn_scan = st.button("🚀 INICIAR BUSCA")
 
-# Gestão de Créditos (Estado da Sessão)
+# Gestão de Créditos
 if 'creditos_restantes' not in st.session_state: st.session_state.creditos_restantes = "---"
-if 'creditos_usados' not in st.session_state: st.session_state.creditos_usados = "---"
-
 st.sidebar.info(f"💳 Créditos Restantes: {st.session_state.creditos_restantes}")
 
 # Configuração de Tempo
@@ -76,7 +85,6 @@ def get_ligas_futebol(chave):
     url = f"https://api.the-odds-api.com/v4/sports/?apiKey={chave}"
     try:
         res = requests.get(url).json()
-        # Bloqueio estrito de divisões inferiores
         bloqueio = ["championship", "league_one", "league_two", "liga_2", "division_2", "bundesliga_2", "serie_b", "serie_c", "3. liga", "la liga 2"]
         continentais = ["uefa", "conmebol", "afc", "caf", "concacaf", "champions", "libertadores", "sudamericana"]
         
@@ -94,22 +102,28 @@ def get_ligas_futebol(chave):
 def scan_odds(chave, ligas, d_ini, d_fim, min_f, max_f, min_z):
     jogos = []
     prog = st.progress(0)
-    casas = ["betano", "betfair_ex_eu", "betfair_sb_uk", "bet365"]
-    creditos_consumidos = 0
+    # PRIORIDADE: Betano, Betfair, depois Bet365
+    casas_prioridade = ["betano", "betfair_ex_eu", "betfair_sb_uk", "bet365"]
     
     for i, l_key in enumerate(ligas):
         url = f"https://api.the-odds-api.com/v4/sports/{l_key}/odds/?apiKey={chave}&regions=eu&markets=h2h&commenceTimeFrom={d_ini}&commenceTimeTo={d_fim}"
         try:
             response = requests.get(url)
-            # Atualiza créditos a cada chamada
             st.session_state.creditos_restantes = response.headers.get('x-requests-remaining', "---")
-            creditos_consumidos += 1
-            
             res = response.json()
             for jogo in res:
-                book = next((b for b in jogo.get("bookmakers", []) if b['key'] in casas), None)
-                if not book: continue
-                odds = {o['name']: o['price'] for o in book['markets'][0]['outcomes']}
+                bookmakers = jogo.get("bookmakers", [])
+                if not bookmakers: continue
+                
+                # Busca pela casa na ordem de prioridade
+                site = None
+                for cp in casas_prioridade:
+                    site = next((b for b in bookmakers if b['key'] == cp), None)
+                    if site: break
+                
+                if not site: site = bookmakers[0] # Se não achar nenhuma das 3, pega a primeira disponível
+                
+                odds = {o['name']: o['price'] for o in site['markets'][0]['outcomes']}
                 c, f = jogo['home_team'], jogo['away_team']
                 oc, of = odds.get(c, 0), odds.get(f, 0)
                 
@@ -117,17 +131,15 @@ def scan_odds(chave, ligas, d_ini, d_fim, min_f, max_f, min_z):
                 
                 if min_f <= o_fav <= max_f and o_zeb >= min_z:
                     h_br = datetime.strptime(jogo["commence_time"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc).astimezone(tz_br).strftime("%H:%M")
-                    nome_liga, nome_pais = traduzir_liga_e_pais(jogo["sport_title"])
+                    liga_nome, pais_nome = identificar_origem(jogo["sport_title"])
                     
                     jogos.append({
-                        "⏰ Hora": h_br, "🌍 País": nome_pais, "🏆 Liga": nome_liga, 
+                        "⏰ Hora": h_br, "🌍 País/Origem": pais_nome, "🏆 Liga": liga_nome, 
                         "🛡️ Fav": fav, "🦓 Zeb": zeb, "📈 Odd F": o_fav, "📉 Odd Z": o_zeb, 
-                        "🏦 Casa": book['title'], "📍 Local": loc
+                        "🏦 Casa": site['title'], "📍 Local": loc
                     })
         except: pass
         prog.progress((i + 1) / len(ligas))
-    
-    st.session_state.creditos_usados = creditos_consumidos
     prog.empty()
     return jogos
 
@@ -139,21 +151,25 @@ if btn_scan:
         status.info("Buscando pauta elite...")
         ligas_filtradas = get_ligas_futebol(api_key)
         resultados = scan_odds(api_key, ligas_filtradas, ini_utc, fim_utc, min_f, max_f, min_z)
-        
-        # ORDENAÇÃO POR HORÁRIO
         st.session_state.res_pauta = sorted(resultados, key=lambda x: x['⏰ Hora'])
-        
         if not resultados: status.warning("Nenhum jogo encontrado.")
-        else: status.success(f"Busca finalizada! Gastou {st.session_state.creditos_usados} créditos.")
+        else: status.success(f"Busca finalizada!")
 
 if st.session_state.res_pauta:
+    # Tabela agora é totalmente interativa (pode clicar no topo para ordenar)
     st.dataframe(pd.DataFrame(st.session_state.res_pauta), use_container_width=True, hide_index=True)
-    if st.button("📲 ENVIAR PARA O TELEGRAM"):
+    
+    if st.button("📲 DESPACHAR PARA O TELEGRAM"):
         msg = f"🎯 *RADAR VIP - {data_alvo.strftime('%d/%m')}*\n"
         msg += f"━━━━━━━━━━━━━━━━━━━━\n\n"
-        for j in st.session_state.res_pauta:
-            header = f"🌍 *País:* {j['🌍 País']}\n" if j['🌍 País'] else ""
-            msg += f"⏰ *{j['⏰ Hora']}* | {j['📍 Local']}\n{header}🏆 *Liga:* {j['🏆 Liga']}\n⭐ {j['🛡️ Fav']} ({j['📈 Odd F']:.2f})\n🦓 {j['🦓 Zeb']} ({j['📉 Odd Z']:.2f})\n🏦 {j['🏦 Casa']}\n\n"
+        for idx, j in enumerate(st.session_state.res_pauta, 1):
+            msg += f"🔥 *JOGO {idx:02d}*\n"
+            msg += f"⏰ *{j['⏰ Hora']}* | {j['🌍 País/Origem']}\n"
+            msg += f"🏆 {j['🏆 Liga']}\n"
+            msg += f"⭐ {j['🛡️ Fav']} ({j['📈 Odd F']:.2f})\n"
+            msg += f"🦓 {j['🦓 Zeb']} ({j['📉 Odd Z']:.2f})\n"
+            msg += f"🏦 Via {j['🏦 Casa']}\n\n"
+            msg += f"───────────────\n\n"
         
         requests.post(f"https://api.telegram.org/bot{t_token}/sendMessage", json={"chat_id": t_id, "text": msg, "parse_mode": "Markdown"})
-        st.success("✅ Enviado!")
+        st.success("✅ Pauta enviada e numerada!")
