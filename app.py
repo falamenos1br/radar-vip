@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 
 # --- CONFIGURAÇÃO VISUAL ---
 st.set_page_config(page_title="Radar VIP - Gestão de Créditos", layout="wide")
-st.markdown("""<style>.stApp { background-color: #0b0e14; } .stDataFrame { background-color: #161a23; } h1 { color: #f1c40f !important; text-align: center; } .stButton>button { background: linear-gradient(90deg, #f39c12, #e67e22); color: white; font-weight: bold; width: 100%; border-radius: 8px; height: 50px; }</style>""", unsafe_allow_html=True)
+st.markdown("""<style>.stApp { background-color: #0b0e14; } .stDataFrame { background-color: #161a23; } h1 { color: #f1c40f !important; text-align: center; font-weight: 800; } .stButton>button { background: linear-gradient(90deg, #f39c12, #e67e22); color: white; font-weight: bold; width: 100%; border-radius: 8px; height: 50px; }</style>""", unsafe_allow_html=True)
 
 st.title("🎯 MASTER RADAR VIP: GESTÃO INTELIGENTE")
 status = st.empty()
@@ -29,7 +29,7 @@ with st.sidebar:
     
     st.markdown("---")
     st.markdown("### ✈️ Integração Telegram")
-    bot_token = st.text_input("Token do Bot (BotFather):")
+    bot_token = st.text_input("Token do Bot (BotFather):", type="password")
     chat_id = st.text_input("Seu Chat ID (userinfobot):")
     
     btn_scan = st.button("🚀 INICIAR VARREDURA SEGURA")
@@ -52,16 +52,18 @@ def get_ligas_seguro(chave):
     return []
 
 def filtrar_ligas_artesanal(lista_total):
-    """SISTEMA DE SEGURANÇA 3: Filtra ligas indesejadas localmente para não gastar crédito."""
+    """SISTEMA DE SEGURANÇA 3: Filtra ligas indesejadas e garante APENAS Futebol."""
     selecionadas = []
-    # Divisões que vamos bloquear fora do Brasil
     bloqueio = ["championship", "league_one", "league_two", "liga_2", "division_2", "bundesliga_2", "serie_b", "serie_c"]
-    # Palavras de torneios continentais que aceitamos sempre
     continentais = ["uefa", "conmebol", "afc", "caf", "concacaf", "champions", "libertadores", "sudamericana"]
     
     for liga in lista_total:
         key = liga['key'].lower()
         title = liga['title'].lower()
+        
+        # 🚨 REGRA DE OURO: Se não for Futebol (soccer), pula fora imediatamente!
+        if "soccer" not in key:
+            continue
         
         # 1. BRASIL: Aceita tudo (A, B, C, D, Copa, Estadual)
         if "brazil" in key or "brazil" in title:
@@ -120,10 +122,13 @@ def scan_odds(chave, ligas_filtradas, d_ini, d_fim, min_f, max_f, min_z):
     return jogos_final
 
 # --- EXECUÇÃO ---
+if 'resultados' not in st.session_state:
+    st.session_state.resultados = []
+
 if btn_scan:
     if not api_key: st.warning("Por favor, insira a chave da API.")
     else:
-        status.info("Iniciando varredura segura...")
+        status.info("Iniciando varredura segura (Apenas Futebol)...")
         todas_ligas = get_ligas_seguro(api_key)
         if todas_ligas:
             ligas_alvo = filtrar_ligas_artesanal(todas_ligas)
@@ -131,15 +136,39 @@ if btn_scan:
             resultados = scan_odds(api_key, ligas_alvo, ini_utc, fim_utc, min_f, max_f, min_z)
             
             if resultados:
-                st.success(f"Encontrados {len(resultados)} jogos de alto valor!")
-                df = pd.DataFrame(resultados)
-                st.dataframe(df, use_container_width=True, hide_index=True)
-                
-                # Botão para enviar ao Telegram (Opcional)
-                if st.button("📲 DESPACHAR PARA O TELEGRAM"):
-                    # Aqui iria a função de envio que já configuramos
-                    pass
+                st.session_state.resultados = resultados
+                status.success(f"Encontrados {len(resultados)} jogos de alto valor!")
             else:
-                st.warning("Nenhum jogo passou pelos filtros de segurança nesta data.")
+                st.session_state.resultados = []
+                status.warning("Nenhum jogo passou pelos filtros de segurança nesta data.")
         else:
-            st.error("Erro ao conectar com a API. Verifique sua chave.")
+            status.error("Erro ao conectar com a API. Verifique sua chave.")
+
+if st.session_state.resultados:
+    df = pd.DataFrame(st.session_state.resultados)
+    
+    # Formatação para exibir as odds com 2 casas decimais na tela
+    st.dataframe(
+        df, 
+        use_container_width=True, 
+        hide_index=True,
+        column_config={
+            "📈 Odd F": st.column_config.NumberColumn(format="%.2f"),
+            "📉 Odd Z": st.column_config.NumberColumn(format="%.2f")
+        }
+    )
+    
+    # Botão para enviar ao Telegram
+    if st.button("📲 DESPACHAR PARA O TELEGRAM"):
+        if not bot_token or not chat_id:
+            st.error("Preencha o Token do Bot e o Chat ID no painel lateral!")
+        else:
+            mensagem = f"🎯 *RADAR VIP - {data_alvo.strftime('%d/%m')}*\n\n"
+            for j in st.session_state.resultados:
+                mensagem += f"🏆 {j['🏆 Liga']}\n⏰ {j['⏰ Hora']} | {j['📍 Local']}\n⭐ {j['🛡️ Fav']} (Odd: {j['📈 Odd F']:.2f})\n🦓 {j['🦓 Zeb']} (Odd: {j['📉 Odd Z']:.2f})\n🏦 Via {j['🏦 Casa']}\n\n"
+            
+            res = requests.post(f"https://api.telegram.org/bot{bot_token}/sendMessage", json={"chat_id": chat_id, "text": mensagem, "parse_mode": "Markdown"})
+            if res.status_code == 200: 
+                st.success("✅ Pauta enviada para o Telegram com sucesso!")
+            else: 
+                st.error("Erro no Telegram. Verifique seu Token e Chat ID.")
