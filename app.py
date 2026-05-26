@@ -3,14 +3,63 @@ import pandas as pd
 import requests
 from datetime import datetime, timedelta, timezone
 
-# --- CONFIGURAÇÃO VISUAL ---
-st.set_page_config(page_title="Radar VIP - Agência Pro", layout="wide")
-st.markdown("""<style>.stApp { background-color: #0b0e14; } .stDataFrame { background-color: #161a23; } h1 { color: #f1c40f !important; text-align: center; font-weight: 800; } .stButton>button { background: linear-gradient(90deg, #f39c12, #e67e22); color: white; font-weight: bold; width: 100%; border-radius: 8px; height: 50px; }</style>""", unsafe_allow_html=True)
+# --- CONFIGURAÇÃO VISUAL (MOBILE & DARK MODE FORÇADO) ---
+st.set_page_config(page_title="Radar VIP - Agência Pro", layout="wide", initial_sidebar_state="collapsed")
+
+st.markdown("""
+<style>
+    /* Força o fundo escuro e texto claro em todo o app */
+    .stApp { background-color: #0b0e14 !important; color: #f1f1f1 !important; }
+    
+    /* Ajustes para celular */
+    h1 { color: #f1c40f !important; text-align: center; font-weight: 800; font-size: 28px !important; margin-bottom: 20px;}
+    h3 { font-size: 18px !important; color: #e0e0e0 !important; }
+    
+    /* Botões grandes e fáceis de tocar no Android */
+    .stButton>button { 
+        background: linear-gradient(90deg, #f39c12, #e67e22) !important; 
+        color: white !important; 
+        font-weight: 900 !important; 
+        font-size: 18px !important;
+        width: 100% !important; 
+        border-radius: 12px !important; 
+        height: 60px !important; 
+        border: none !important;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+    }
+    
+    /* Fundo das tabelas e painéis laterais */
+    .stDataFrame { background-color: #161a23 !important; }
+    [data-testid="stSidebar"] { background-color: #12151c !important; }
+    
+    /* Caixas de texto e input adaptadas */
+    input, select { background-color: #1e2430 !important; color: white !important; border-radius: 8px !important; border: 1px solid #333 !important;}
+</style>
+""", unsafe_allow_html=True)
 
 st.title("🎯 MASTER RADAR VIP")
 status = st.empty()
 
-# --- DICIONÁRIO DE TRADUÇÃO ---
+# --- PAINEL DE DIAGNÓSTICO (TESTE DE LIGAS) ---
+with st.expander("🔍 Inspecionar Ligas Reais da API (Diagnóstico)"):
+    st.info("Use isso para ver quais ligas o sistema da API liberou para o Brasil hoje. (Não consome créditos pesados)")
+    api_teste = st.text_input("Cole sua Chave API aqui para testar:", type="password")
+    if st.button("Ver Ligas Disponíveis Agora"):
+        if api_teste:
+            try:
+                url_teste = f"https://api.the-odds-api.com/v4/sports/?apiKey={api_teste}"
+                dados_api = requests.get(url_teste).json()
+                ligas_futebol = [f"{l['key']} ({l['title']})" for l in dados_api if "soccer" in l['key'].lower()]
+                st.success(f"Encontramos {len(ligas_futebol)} ligas de futebol ativas no mundo hoje:")
+                st.json(ligas_futebol)
+            except Exception as e:
+                st.error(f"Erro: {e}")
+        else:
+            st.warning("Insira a chave para testar.")
+
+st.markdown("---")
+
+# --- DICIONÁRIOS ---
 TRADUCAO = {
     "Germany": "Alemanha", "England": "Inglaterra", "Spain": "Espanha", "Italy": "Itália",
     "France": "França", "Portugal": "Portugal", "Netherlands": "Holanda", "Brazil": "Brasil",
@@ -55,26 +104,23 @@ with st.sidebar:
     st.markdown("### 📅 Filtros de Data")
     data_alvo = st.date_input("Jogos do dia:", value=datetime.now().date() + timedelta(days=1))
     
-    st.markdown("### 🏆 Filtro: Favorito para Vencer (1X2)")
+    st.markdown("### 🏆 Favorito (1X2)")
     col1, col2 = st.columns(2)
     with col1: min_f = st.number_input("Min Fav", value=1.25, step=0.05)
     with col2: max_f = st.number_input("Max Fav", value=1.75, step=0.05)
     min_z = st.number_input("Min Zebra", value=3.50, step=0.10)
     
-    st.markdown("### 🛡️ Filtro: Cobertura Dupla Chance (Favo ou Empate)")
-    usar_filtro_dc = st.checkbox("Ativar Filtro Separado para Dupla Chance", value=True)
+    st.markdown("### 🛡️ Dupla Chance")
+    usar_filtro_dc = st.checkbox("Ativar Filtro Separado", value=True)
     col3, col4 = st.columns(2)
     with col3: min_dc_odd = st.number_input("Min Odd DC", value=1.10, step=0.02)
     with col4: max_dc_odd = st.number_input("Max Odd DC", value=1.40, step=0.02)
     
     st.markdown("---")
-    st.markdown("### ⚽ Filtros de Gols")
-    mercado_gol = st.selectbox("Linha de Gols Padrão:", ["Over 1.5", "Over 2.5", "Over 3.5", "Under 1.5", "Under 2.5", "Under 3.5"])
-    
-    st.markdown("---")
-    st.markdown("### 📐 Filtros de Escanteios")
-    canto_ht = st.selectbox("Linha de Cantos HT (1º Tempo):", ["Over 3.5 HT", "Over 4.5 HT", "Under 4.5 HT", "Under 5.5 HT"])
-    canto_ft = st.selectbox("Linha de Cantos FT (90 Min):", ["Over 8.5 FT", "Over 9.5 FT", "Over 10.5 FT", "Under 10.5 FT"])
+    st.markdown("### ⚽ Mercados Base")
+    mercado_gol = st.selectbox("Gols Padrão:", ["Over 1.5", "Over 2.5", "Over 3.5", "Under 1.5", "Under 2.5", "Under 3.5"])
+    canto_ht = st.selectbox("Cantos HT:", ["Over 3.5 HT", "Over 4.5 HT", "Under 4.5 HT", "Under 5.5 HT"])
+    canto_ft = st.selectbox("Cantos FT:", ["Over 8.5 FT", "Over 9.5 FT", "Over 10.5 FT", "Under 10.5 FT"])
     
     st.markdown("---")
     st.markdown("### ✈️ Telegram")
@@ -84,7 +130,7 @@ with st.sidebar:
     btn_scan = st.button("🚀 INICIAR BUSCA")
 
 if 'creditos_restantes' not in st.session_state: st.session_state.creditos_restantes = "---"
-st.sidebar.info(f"💳 Créditos Restantes: {st.session_state.creditos_restantes}")
+st.sidebar.info(f"💳 Créditos da API: {st.session_state.creditos_restantes}")
 
 tz_br = timezone(timedelta(hours=-3))
 ini_utc = datetime(data_alvo.year, data_alvo.month, data_alvo.day, 0, 0, 0, tzinfo=tz_br).astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -107,7 +153,9 @@ def get_ligas_futebol(chave):
         return selecionadas
     except: return []
 
-def scan_odds(chave, ligas, d_ini, d_fim, min_f, max_f, min_z):
+# Uso de cache para economizar requisições repetidas no mesmo dia
+@st.cache_data(ttl=1800)
+def scan_odds(chave, ligas, d_ini, d_fim, min_f, max_f, min_z, _usar_filtro_dc, _min_dc, _max_dc):
     jogos = []
     prog = st.progress(0)
     casas_prioridade = ["betano", "betfair_ex_eu", "betfair_sb_uk", "bet365"]
@@ -140,8 +188,8 @@ def scan_odds(chave, ligas, d_ini, d_fim, min_f, max_f, min_z):
                 odd_dc = 1 / (pct_dc / 100)
                 
                 passou_filtro_dc = True
-                if usar_filtro_dc:
-                    passou_filtro_dc = (min_dc_odd <= odd_dc <= max_dc_odd)
+                if _usar_filtro_dc:
+                    passou_filtro_dc = (_min_dc <= odd_dc <= _max_dc)
                 
                 if passou_filtro_vitoria or passou_filtro_dc:
                     h_br = datetime.strptime(jogo["commence_time"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc).astimezone(tz_br).strftime("%H:%M")
@@ -178,21 +226,21 @@ def scan_odds(chave, ligas, d_ini, d_fim, min_f, max_f, min_z):
 if 'res_pauta' not in st.session_state: st.session_state.res_pauta = []
 
 if btn_scan:
-    if not api_key: st.error("Insira uma Chave API!")
+    if not api_key: st.error("Insira uma Chave API no menu lateral!")
     else:
-        status.info("Buscando pauta elite...")
+        status.info("Buscando pauta de elite... Aguarde!")
         ligas_filtradas = get_ligas_futebol(api_key)
-        resultados = scan_odds(api_key, ligas_filtradas, ini_utc, fim_utc, min_f, max_f, min_z)
+        resultados = scan_odds(api_key, ligas_filtradas, ini_utc, fim_utc, min_f, max_f, min_z, usar_filtro_dc, min_dc_odd, max_dc_odd)
         st.session_state.res_pauta = sorted(resultados, key=lambda x: x['⏰ Hora'])
-        if not resultados: status.warning("Nenhum jogo encontrado.")
-        else: status.success(f"Busca finalizada!")
+        if not resultados: status.warning("Nenhum jogo encontrado com esses filtros.")
+        else: status.success(f"Busca finalizada! {len(resultados)} jogos encontrados.")
 
 if st.session_state.res_pauta:
     st.dataframe(pd.DataFrame(st.session_state.res_pauta), use_container_width=True, hide_index=True)
     
     if st.button("📲 DESPACHAR PARA O TELEGRAM"):
         if not t_token or not t_id:
-            st.error("Token ou ID ausentes!")
+            st.error("Configure o Token e ID do Telegram no menu!")
         else:
             cabecalho = f"🎯 *RADAR VIP - {data_alvo.strftime('%d/%m')}*\n━━━━━━━━━━━━━━━━━━━━\n\n"
             mensagens = []
@@ -207,17 +255,16 @@ if st.session_state.res_pauta:
                     f"🔥 *JOGO {idx:02d}*\n"
                     f"⏰ *{j['⏰ Hora']}* | {j['🌍 País/Origem']}\n"
                     f"🏆 {j['🏆 Liga']}\n\n"
-                    f"⭐ *PALPITE PRINCIPAL (MERCADO 1X2):*\n"
-                    f"👉 Vitória do {j['🛡️ Fav']} ({j['📈 Odd F']:.2f}) | *{j['🎯 % Fav']:.1f}% de Chance*\n"
-                    f"`{b_fav}`\n"
-                    f"🦓 {j['🦓 Zeb']} ({j['📉 Odd Z']:.2f})\n\n"
-                    f"🛡️ *COBERTURA ANTI-ZEBRA (MERCADO DUPLA CHANCE):*\n"
-                    f"👉 {j['🛡️ Fav']} ou Empate ({j['🛡️ Odd DC']:.2f}) | *{j['🛡️ % DC']:.1f}% de Segurança*\n"
-                    f"`{b_dc}`\n\n"
+                    f"⭐ *PALPITE PRINCIPAL (1X2):*\n"
+                    f"👉 Vitória: {j['🛡️ Fav']} ({j['📈 Odd F']:.2f})\n"
+                    f"`{b_fav}` *{j['🎯 % Fav']:.1f}%*\n\n"
+                    f"🛡️ *COBERTURA DUPLA CHANCE:*\n"
+                    f"👉 {j['🛡️ Fav']} ou Empate ({j['🛡️ Odd DC']:.2f})\n"
+                    f"`{b_dc}` *{j['🛡️ % DC']:.1f}%*\n\n"
                     f"⚽ *MERCADO DE GOLS:*\n"
-                    f"👉 {j['⚽ Mercado Gol']}: *{j['📊 % Gol']:.1f}% de Chance*\n"
+                    f"👉 {j['⚽ Mercado Gol']}: *{j['📊 % Gol']:.1f}%*\n"
                     f"`{b_gol}`\n\n"
-                    f"📐 *MERCADO DE ESCANTEIOS:*\n"
+                    f"📐 *ESCANTEIOS:*\n"
                     f"⏱️ {j['📐 Canto HT']}: *{j['📈 % HT']:.1f}%*\n"
                     f"🏃 {j['📐 Canto FT']}: *{j['📈 % FT']:.1f}%*\n"
                     f"🏦 Via {j['🏦 Casa']}\n"
@@ -229,3 +276,21 @@ if st.session_state.res_pauta:
                     texto_atual = cabecalho + bloco
                 else:
                     texto_atual += bloco
+            
+            mensagens.append(texto_atual)
+            
+            sucesso = True
+            for msg in mensagens:
+                url_telegram = f"https://api.telegram.org/bot{t_token}/sendMessage"
+                payload = {"chat_id": t_id, "text": msg, "parse_mode": "Markdown"}
+                try:
+                    resp = requests.post(url_telegram, json=payload)
+                    if resp.status_code != 200:
+                        st.error(f"Falha no envio. Erro: {resp.text}")
+                        sucesso = False
+                except Exception as e:
+                    st.error(f"Erro de conexão: {e}")
+                    sucesso = False
+                    
+            if sucesso:
+                st.success("✅ Pauta enviada para o VIP!")
