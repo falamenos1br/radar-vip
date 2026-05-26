@@ -42,9 +42,9 @@ def get_secret(key, default=""):
 
 def criar_barra_porcentagem(pct):
     blocos = int(pct / 10)
-    return "█" * pools + "▒" * (10 - pools)
+    return "█" * blocks + "▒" * (10 - blocks)
 
-# --- PAINEL LATERAL (AUTONOMIA DE FILTROS) ---
+# --- PAINEL LATERAL (TODOS OS FILTROS SEPARADOS) ---
 with st.sidebar:
     st.markdown("### 🔑 Chaves de Acesso")
     opcao_api = st.selectbox("Escolher conta da API:", ["Conta 1", "Conta 2", "Conta 3", "Conta 4"])
@@ -123,7 +123,7 @@ def scan_odds(chave, ligas, d_ini, d_fim, min_f, max_f, min_z):
                 oc, of = odds.get(c, 0), odds.get(f, 0)
                 fav, zeb, o_fav, o_zeb, loc = (c, f, oc, of, "🏠 Casa") if oc <= of else (f, c, of, oc, "✈️ Fora")
                 
-                # Captura a odd do empate para calcular a Dupla Chance real
+                # Coleta o empate real do mercado para calcular a Dupla Chance separadamente
                 o_empate = next((o['price'] for o in site['markets'][0]['outcomes'] if o['name'] == 'Draw'), 3.40)
                 
                 if min_f <= o_fav <= max_f and o_zeb >= min_z:
@@ -131,14 +131,15 @@ def scan_odds(chave, ligas, d_ini, d_fim, min_f, max_f, min_z):
                     liga_nome, pais_nome = identificar_origem(jogo["sport_title"])
                     
                     # --- MODELAGEM MATEMÁTICA ---
+                    # 1. MERCADO PRINCIPAL: VITÓRIA DO FAVORITO SECO
                     pct_fav = (1 / o_fav) * 100
                     pct_empate = (1 / o_empate) * 100
                     
-                    # --- NOVO: CÁLCULO DE DUPLA CHANCE (FAVORITO OU EMPATE) ---
-                    pct_dc = min(96.0, pct_fav + pct_empate) # Soma das probabilidades implicadas
-                    odd_dc = 1 / (pct_dc / 100) # Converte de volta para formato de Odd decimal
+                    # 2. COBERTURA: DUPLA CHANCE (FAVORITO OU EMPATE)
+                    pct_dc = min(96.0, pct_fav + pct_empate)
+                    odd_dc = 1 / (pct_dc / 100)
                     
-                    # Derivação estatística de Gols
+                    # 3. GOLS (Derivado)
                     if "over 1.5" in mercado_gol.lower(): pct_gols = max(65.0, min(88.0, pct_fav + 12))
                     elif "over 2.5" in mercado_gol.lower(): pct_gols = max(45.0, min(68.0, pct_fav - 2))
                     elif "over 3.5" in mercado_gol.lower(): pct_gols = max(25.0, min(44.0, pct_fav - 20))
@@ -146,7 +147,7 @@ def scan_odds(chave, ligas, d_ini, d_fim, min_f, max_f, min_z):
                     elif "under 2.5" in mercado_gol.lower(): pct_gols = max(32.0, min(55.0, 100 - (pct_fav - 2)))
                     else: pct_gols = max(56.0, min(75.0, 100 - (pct_fav - 20)))
 
-                    # Derivação estatística de Cantos
+                    # 4. ESCANTEIOS (Derivado)
                     if "4.5" in canto_ht: pct_c_ht = max(52.0, min(68.0, pct_fav * 0.95))
                     else: pct_c_ht = max(64.0, min(79.0, pct_fav * 1.15))
                     
@@ -158,7 +159,7 @@ def scan_odds(chave, ligas, d_ini, d_fim, min_f, max_f, min_z):
                         "⏰ Hora": h_br, "🌍 País/Origem": pais_nome, "🏆 Liga": liga_nome, 
                         "🛡️ Fav": fav, "🦓 Zeb": zeb, "📈 Odd F": o_fav, "📉 Odd Z": o_zeb, 
                         "🏦 Casa": site['title'], "📍 Local": loc, "🎯 % Fav": pct_fav,
-                        "🛡️ Odd DC": odd_dc, "🛡️ % DC": pct_dc, # Injetado no banco de dados temporário
+                        "🛡️ Odd DC": odd_dc, "🛡️ % DC": pct_dc,
                         "⚽ Mercado Gol": mercado_gol, "📊 % Gol": pct_gols,
                         "📐 Canto HT": canto_ht, "📈 % HT": pct_c_ht,
                         "📐 Canto FT": canto_ft, "📈 % FT": pct_c_ft
@@ -196,15 +197,15 @@ if st.session_state.res_pauta:
                 b_dc = criar_barra_porcentagem(j['🛡️ % DC'])
                 b_gol = criar_barra_porcentagem(j['📊 % Gol'])
                 
-                # Texto ultra-formatado contendo agora a segurança da Dupla Chance
                 bloco = (
                     f"🔥 *JOGO {idx:02d}*\n"
                     f"⏰ *{j['⏰ Hora']}* | {j['🌍 País/Origem']}\n"
-                    f"🏆 {j['🏆 Liga']}\n"
-                    f"⭐ {j['🛡️ Fav']} ({j['📈 Odd F']:.2f}) | {j['🎯 % Fav']:.1f}%\n"
+                    f"🏆 {j['🏆 Liga']}\n\n"
+                    f"⭐ *PALPITE PRINCIPAL (MERCADO 1X2):*\n"
+                    f"👉 Vitória do {j['🛡️ Fav']} ({j['📈 Odd F']:.2f}) | *{j['🎯 % Fav']:.1f}% de Chance*\n"
                     f"`{b_fav}`\n"
                     f"🦓 {j['🦓 Zeb']} ({j['📉 Odd Z']:.2f})\n\n"
-                    f"🛡️ *COBERTURA ANTI-ZEBRA:*\n"
+                    f"🛡️ *COBERTURA ANTI-ZEBRA (MERCADO DUPLA CHANCE):*\n"
                     f"👉 {j['🛡️ Fav']} ou Empate ({j['🛡️ Odd DC']:.2f}) | *{j['🛡️ % DC']:.1f}% de Segurança*\n"
                     f"`{b_dc}`\n\n"
                     f"⚽ *MERCADO DE GOLS:*\n"
