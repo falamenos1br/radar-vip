@@ -222,4 +222,18 @@ if st.session_state.res_pauta:
                     f"`{b_dc}`\n\n"
                     f"⚽ *MERCADO DE GOLS:*\n"
                     f"👉 {j['⚽ Mercado Gol']}: *{j['📊 % Gol']:.1f}% de Chance*\n"
-                    f"`{b_gol}`\n\
+                    f"`{b_gol}`\n\n"
+                    f"📐 *MERCADO DE ESCANTEIOS:*\n"
+                    f"⏱️ {j['📐 Canto HT']}: *{j['📈 % HT']:.1f}%*\n"
+                    f"🏃 {j['📐 Canto FT']}: *{j['📈 % FT']:.1f}%*\n"
+                    f"🏦 Via {j['🏦 Casa']}\n"
+                    f"───────────────\n\n"
+                )
+                
+                if len(texto_atual + bloco) > 3500:
+                    mensagens.append(texto_atual)
+                    texto_atual = cabecalho + bloco
+                else:
+                    texto_atual += bloco
+            
+            mensagens.append(texto_atual
