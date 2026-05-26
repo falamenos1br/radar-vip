@@ -41,9 +41,8 @@ def get_secret(key, default=""):
     except: return default
 
 def criar_barra_porcentagem(pct):
-    # Gera uma barra visual estilizada para o seu Telegram/Vídeos
     blocos = int(pct / 10)
-    return "█" * blocks + "▒" * (10 - blocks)
+    return "█" * pools + "▒" * (10 - pools)
 
 # --- PAINEL LATERAL (AUTONOMIA DE FILTROS) ---
 with st.sidebar:
@@ -57,9 +56,9 @@ with st.sidebar:
     data_alvo = st.date_input("Jogos do dia:", value=datetime.now().date() + timedelta(days=1))
     
     col1, col2 = st.columns(2)
-    with col1: min_f = st.number_input("Min Fav", value=1.50, step=0.05) # Ajustado para sua nova estratégia de longo prazo
+    with col1: min_f = st.number_input("Min Fav", value=1.50, step=0.05)
     with col2: max_f = st.number_input("Max Fav", value=1.85, step=0.05)
-    min_z = st.number_input("Min Zebra", value=3.40, step=0.10) # Ajustado automaticamente para a nova faixa de favoritos
+    min_z = st.number_input("Min Zebra", value=3.40, step=0.10)
     
     st.markdown("---")
     st.markdown("### ⚽ Filtros de Gols")
@@ -124,15 +123,22 @@ def scan_odds(chave, ligas, d_ini, d_fim, min_f, max_f, min_z):
                 oc, of = odds.get(c, 0), odds.get(f, 0)
                 fav, zeb, o_fav, o_zeb, loc = (c, f, oc, of, "🏠 Casa") if oc <= of else (f, c, of, oc, "✈️ Fora")
                 
+                # Captura a odd do empate para calcular a Dupla Chance real
+                o_empate = next((o['price'] for o in site['markets'][0]['outcomes'] if o['name'] == 'Draw'), 3.40)
+                
                 if min_f <= o_fav <= max_f and o_zeb >= min_z:
                     h_br = datetime.strptime(jogo["commence_time"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc).astimezone(tz_br).strftime("%H:%M")
                     liga_nome, pais_nome = identificar_origem(jogo["sport_title"])
                     
-                    # --- MODELAGEM MATEMÁTICA DE MERCADOS SECUNDÁRIOS ---
-                    # Probabilidade Implicada do Favorito baseada na Odd Real
+                    # --- MODELAGEM MATEMÁTICA ---
                     pct_fav = (1 / o_fav) * 100
+                    pct_empate = (1 / o_empate) * 100
                     
-                    # Derivação estatística baseada no equilíbrio da linha H2H
+                    # --- NOVO: CÁLCULO DE DUPLA CHANCE (FAVORITO OU EMPATE) ---
+                    pct_dc = min(96.0, pct_fav + pct_empate) # Soma das probabilidades implicadas
+                    odd_dc = 1 / (pct_dc / 100) # Converte de volta para formato de Odd decimal
+                    
+                    # Derivação estatística de Gols
                     if "over 1.5" in mercado_gol.lower(): pct_gols = max(65.0, min(88.0, pct_fav + 12))
                     elif "over 2.5" in mercado_gol.lower(): pct_gols = max(45.0, min(68.0, pct_fav - 2))
                     elif "over 3.5" in mercado_gol.lower(): pct_gols = max(25.0, min(44.0, pct_fav - 20))
@@ -140,7 +146,7 @@ def scan_odds(chave, ligas, d_ini, d_fim, min_f, max_f, min_z):
                     elif "under 2.5" in mercado_gol.lower(): pct_gols = max(32.0, min(55.0, 100 - (pct_fav - 2)))
                     else: pct_gols = max(56.0, min(75.0, 100 - (pct_fav - 20)))
 
-                    # Cálculo derivado para as linhas customizadas de Cantos HT e FT
+                    # Derivação estatística de Cantos
                     if "4.5" in canto_ht: pct_c_ht = max(52.0, min(68.0, pct_fav * 0.95))
                     else: pct_c_ht = max(64.0, min(79.0, pct_fav * 1.15))
                     
@@ -152,6 +158,7 @@ def scan_odds(chave, ligas, d_ini, d_fim, min_f, max_f, min_z):
                         "⏰ Hora": h_br, "🌍 País/Origem": pais_nome, "🏆 Liga": liga_nome, 
                         "🛡️ Fav": fav, "🦓 Zeb": zeb, "📈 Odd F": o_fav, "📉 Odd Z": o_zeb, 
                         "🏦 Casa": site['title'], "📍 Local": loc, "🎯 % Fav": pct_fav,
+                        "🛡️ Odd DC": odd_dc, "🛡️ % DC": pct_dc, # Injetado no banco de dados temporário
                         "⚽ Mercado Gol": mercado_gol, "📊 % Gol": pct_gols,
                         "📐 Canto HT": canto_ht, "📈 % HT": pct_c_ht,
                         "📐 Canto FT": canto_ft, "📈 % FT": pct_c_ft
@@ -168,7 +175,7 @@ if btn_scan:
     else:
         status.info("Buscando pauta elite...")
         ligas_filtradas = get_ligas_futebol(api_key)
-        resultados = scan_odds(api_key, ligas_filtradas, ini_utc, fmt_utc, min_f, max_f, min_z)
+        resultados = scan_odds(api_key, ligas_filtradas, ini_utc, fim_utc, min_f, max_f, min_z)
         st.session_state.res_pauta = sorted(resultados, key=lambda x: x['⏰ Hora'])
         if not resultados: status.warning("Nenhum jogo encontrado.")
         else: status.success(f"Busca finalizada!")
@@ -185,11 +192,11 @@ if st.session_state.res_pauta:
             texto_atual = cabecalho
             
             for idx, j in enumerate(st.session_state.res_pauta, 1):
-                # Formatação visual de alta conversão para redes sociais
                 b_fav = criar_barra_porcentagem(j['🎯 % Fav'])
+                b_dc = criar_barra_porcentagem(j['🛡️ % DC'])
                 b_gol = criar_barra_porcentagem(j['📊 % Gol'])
-                b_ft = criar_barra_porcentagem(j['📈 % FT'])
                 
+                # Texto ultra-formatado contendo agora a segurança da Dupla Chance
                 bloco = (
                     f"🔥 *JOGO {idx:02d}*\n"
                     f"⏰ *{j['⏰ Hora']}* | {j['🌍 País/Origem']}\n"
@@ -197,13 +204,15 @@ if st.session_state.res_pauta:
                     f"⭐ {j['🛡️ Fav']} ({j['📈 Odd F']:.2f}) | {j['🎯 % Fav']:.1f}%\n"
                     f"`{b_fav}`\n"
                     f"🦓 {j['🦓 Zeb']} ({j['📉 Odd Z']:.2f})\n\n"
+                    f"🛡️ *COBERTURA ANTI-ZEBRA:*\n"
+                    f"👉 {j['🛡️ Fav']} ou Empate ({j['🛡️ Odd DC']:.2f}) | *{j['🛡️ % DC']:.1f}% de Segurança*\n"
+                    f"`{b_dc}`\n\n"
                     f"⚽ *MERCADO DE GOLS:*\n"
                     f"👉 {j['⚽ Mercado Gol']}: *{j['📊 % Gol']:.1f}% de Chance*\n"
                     f"`{b_gol}`\n\n"
                     f"📐 *MERCADO DE ESCANTEIOS:*\n"
                     f"⏱️ {j['📐 Canto HT']}: *{j['📈 % HT']:.1f}%*\n"
                     f"🏃 {j['📐 Canto FT']}: *{j['📈 % FT']:.1f}%*\n"
-                    f"`{b_ft}`\n"
                     f"🏦 Via {j['🏦 Casa']}\n"
                     f"───────────────\n\n"
                 )
@@ -224,4 +233,4 @@ if st.session_state.res_pauta:
                     st.error(f"Erro no envio: {res.text}")
             
             if sucesso_total:
-                st.success(f"✅ {len(mensagens)} mensagens formatadas enviadas com sucesso!")
+                st.success(f"✅ {len(mensagens)} mensagens enviadas com sucesso!")
