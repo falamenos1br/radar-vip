@@ -43,19 +43,4 @@ def identificar_origem(sport_title):
     for chave, nome in CONTINENTAIS.items():
         if chave in title_low: return sport_title, f"Torneio {nome}"
     if " - " in sport_title:
-        liga, pais_en = sport_title.split(" - ", 1)
-        return liga, TRADUCAO.get(pais_en, pais_en)
-    return sport_title, "Internacional"
-
-def get_secret(key, default=""):
-    try: return st.secrets[key]
-    except: return default
-
-def criar_barra(pct):
-    blocks = int(pct / 10)
-    return "█" * blocks + "▒" * (10 - blocks)
-
-# --- MENU LATERAL (MODO DE OPERAÇÃO) ---
-with st.sidebar:
-    st.markdown("## ⚙️ Configurações")
-    opcao_api =
+        liga, pais_en =
