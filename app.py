@@ -41,10 +41,10 @@ def get_secret(key, default=""):
     except: return default
 
 def criar_barra_porcentagem(pct):
-    blocos = int(pct / 10)
+    blocks = int(pct / 10)
     return "█" * blocks + "▒" * (10 - blocks)
 
-# --- PAINEL LATERAL (TODOS OS FILTROS SEPARADOS) ---
+# --- PAINEL LATERAL ---
 with st.sidebar:
     st.markdown("### 🔑 Chaves de Acesso")
     opcao_api = st.selectbox("Escolher conta da API:", ["Conta 1", "Conta 2", "Conta 3", "Conta 4"])
@@ -52,13 +52,22 @@ with st.sidebar:
     api_key = st.text_input(f"Chave {opcao_api}:", value=get_secret(api_map[opcao_api]), type="password")
     
     st.markdown("---")
-    st.markdown("### 📅 Filtros Principais")
+    st.markdown("### 📅 Filtros de Data")
     data_alvo = st.date_input("Jogos do dia:", value=datetime.now().date() + timedelta(days=1))
     
+    # 1. RETORNADO AO ORIGINAL: FILTRO DE VITÓRIA SECA DO FAVORITO
+    st.markdown("### 🏆 Filtro: Favorito para Vencer (1X2)")
     col1, col2 = st.columns(2)
-    with col1: min_f = st.number_input("Min Fav", value=1.50, step=0.05)
-    with col2: max_f = st.number_input("Max Fav", value=1.85, step=0.05)
-    min_z = st.number_input("Min Zebra", value=3.40, step=0.10)
+    with col1: min_f = st.number_input("Min Fav", value=1.25, step=0.05) # Seu padrão restaurado
+    with col2: max_f = st.number_input("Max Fav", value=1.75, step=0.05) # Seu padrão restaurado
+    min_z = st.number_input("Min Zebra", value=3.50, step=0.10)          # Seu padrão restaurado
+    
+    # 2. NOVO FILTRO INDEPENDENTE: DUPLA CHANCE
+    st.markdown("### 🛡️ Filtro: Cobertura Dupla Chance (Favo ou Empate)")
+    usar_filtro_dc = st.checkbox("Ativar Filtro Separado para Dupla Chance", value=True)
+    col3, col4 = st.columns(2)
+    with col3: min_dc_odd = st.number_input("Min Odd DC", value=1.10, step=0.02)
+    with col4: max_dc_odd = st.number_input("Max Odd DC", value=1.40, step=0.02)
     
     st.markdown("---")
     st.markdown("### ⚽ Filtros de Gols")
@@ -123,23 +132,26 @@ def scan_odds(chave, ligas, d_ini, d_fim, min_f, max_f, min_z):
                 oc, of = odds.get(c, 0), odds.get(f, 0)
                 fav, zeb, o_fav, o_zeb, loc = (c, f, oc, of, "🏠 Casa") if oc <= of else (f, c, of, oc, "✈️ Fora")
                 
-                # Coleta o empate real do mercado para calcular a Dupla Chance separadamente
                 o_empate = next((o['price'] for o in site['markets'][0]['outcomes'] if o['name'] == 'Draw'), 3.40)
                 
-                if min_f <= o_fav <= max_f and o_zeb >= min_z:
+                # --- PROCESSAMENTO INDEPENDENTE DOS DOIS FILTROS ---
+                passou_filtro_vitoria = (min_f <= o_fav <= max_f and o_zeb >= min_z)
+                
+                pct_fav = (1 / o_fav) * 100
+                pct_empate = (1 / o_empate) * 100
+                pct_dc = min(96.0, pct_fav + pct_empate)
+                odd_dc = 1 / (pct_dc / 100)
+                
+                passou_filtro_dc = True
+                if usar_filtro_dc:
+                    passou_filtro_dc = (min_dc_odd <= odd_dc <= max_dc_odd)
+                
+                # O jogo só entra na pauta se respeitar o filtro de vitória OU o filtro independente de dupla chance
+                if passou_filtro_vitoria or passou_filtro_dc:
                     h_br = datetime.strptime(jogo["commence_time"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc).astimezone(tz_br).strftime("%H:%M")
                     liga_nome, pais_nome = identificar_origem(jogo["sport_title"])
                     
-                    # --- MODELAGEM MATEMÁTICA ---
-                    # 1. MERCADO PRINCIPAL: VITÓRIA DO FAVORITO SECO
-                    pct_fav = (1 / o_fav) * 100
-                    pct_empate = (1 / o_empate) * 100
-                    
-                    # 2. COBERTURA: DUPLA CHANCE (FAVORITO OU EMPATE)
-                    pct_dc = min(96.0, pct_fav + pct_empate)
-                    odd_dc = 1 / (pct_dc / 100)
-                    
-                    # 3. GOLS (Derivado)
+                    # Derivação estatística de Gols
                     if "over 1.5" in mercado_gol.lower(): pct_gols = max(65.0, min(88.0, pct_fav + 12))
                     elif "over 2.5" in mercado_gol.lower(): pct_gols = max(45.0, min(68.0, pct_fav - 2))
                     elif "over 3.5" in mercado_gol.lower(): pct_gols = max(25.0, min(44.0, pct_fav - 20))
@@ -147,7 +159,7 @@ def scan_odds(chave, ligas, d_ini, d_fim, min_f, max_f, min_z):
                     elif "under 2.5" in mercado_gol.lower(): pct_gols = max(32.0, min(55.0, 100 - (pct_fav - 2)))
                     else: pct_gols = max(56.0, min(75.0, 100 - (pct_fav - 20)))
 
-                    # 4. ESCANTEIOS (Derivado)
+                    # Derivação estatística de Cantos
                     if "4.5" in canto_ht: pct_c_ht = max(52.0, min(68.0, pct_fav * 0.95))
                     else: pct_c_ht = max(64.0, min(79.0, pct_fav * 1.15))
                     
@@ -210,28 +222,4 @@ if st.session_state.res_pauta:
                     f"`{b_dc}`\n\n"
                     f"⚽ *MERCADO DE GOLS:*\n"
                     f"👉 {j['⚽ Mercado Gol']}: *{j['📊 % Gol']:.1f}% de Chance*\n"
-                    f"`{b_gol}`\n\n"
-                    f"📐 *MERCADO DE ESCANTEIOS:*\n"
-                    f"⏱️ {j['📐 Canto HT']}: *{j['📈 % HT']:.1f}%*\n"
-                    f"🏃 {j['📐 Canto FT']}: *{j['📈 % FT']:.1f}%*\n"
-                    f"🏦 Via {j['🏦 Casa']}\n"
-                    f"───────────────\n\n"
-                )
-                
-                if len(texto_atual + bloco) > 3500:
-                    mensagens.append(texto_atual)
-                    texto_atual = cabecalho + bloco
-                else:
-                    texto_atual += bloco
-            
-            mensagens.append(texto_atual)
-            
-            sucesso_total = True
-            for msg in mensagens:
-                res = requests.post(f"https://api.telegram.org/bot{t_token}/sendMessage", json={"chat_id": t_id, "text": msg, "parse_mode": "Markdown"})
-                if res.status_code != 200:
-                    sucesso_total = False
-                    st.error(f"Erro no envio: {res.text}")
-            
-            if sucesso_total:
-                st.success(f"✅ {len(mensagens)} mensagens enviadas com sucesso!")
+                    f"`{b_gol}`\n\
