@@ -31,7 +31,6 @@ status = st.empty()
 
 # ==========================================
 # ⚙️ NOME DA SUA PLANILHA NO GOOGLE DRIVE ⚙️
-# (Altere aqui se tiver dado outro nome)
 NOME_DA_PLANILHA = "Banco_Dados_Radar"
 # ==========================================
 
@@ -65,7 +64,6 @@ def conectar_planilha():
     try:
         if "google_json" not in st.secrets:
             return None, "⚠️ Chave 'google_json' não encontrada nos Secrets."
-        # Lê o JSON dos Segredos
         cred_dict = json.loads(st.secrets["google_json"])
         gc = gspread.service_account_from_dict(cred_dict)
         planilha = gc.open(NOME_DA_PLANILHA)
@@ -79,29 +77,20 @@ def salvar_no_sheets(dados, modo):
         st.error(msg)
         return False
 
-    # Cria o nome da aba baseado no mês atual (Ex: 09_2026)
     mes_atual = datetime.now().strftime("%m_%Y")
-    
-    try:
-        aba = planilha.worksheet(mes_atual)
+    try: aba = planilha.worksheet(mes_atual)
     except gspread.exceptions.WorksheetNotFound:
-        # Se a aba do mês não existir, o robô cria ela e coloca o cabeçalho!
         aba = planilha.add_worksheet(title=mes_atual, rows="1000", cols="10")
         aba.append_row(["Data", "Hora", "País", "Liga", "Palpite", "Odd", "Mercado", "Tipo", "Resultado"])
 
     data_hoje = datetime.now().strftime("%d/%m/%Y")
     linhas_para_inserir = []
 
-    # 1. Preparar os Jogos Simples
     for j in dados:
         odd = j.get('📈 Odd', j.get('📈 Odd DC', j.get('📈 Odd Gol', 0)))
         palpite = j.get('🛡️ Palpite', j.get('⚽ Linha', ''))
-        linhas_para_inserir.append([
-            data_hoje, j['⏰ Hora'], j['🌍 País'], j['🏆 Liga'], palpite, 
-            odd, modo, "Simples", "Pendente"
-        ])
+        linhas_para_inserir.append([data_hoje, j['⏰ Hora'], j['🌍 País'], j['🏆 Liga'], palpite, odd, modo, "Simples", "Pendente"])
     
-    # 2. Preparar a Múltipla Ouro (Top 3)
     chave_odd = '📈 Odd' if modo == "Vitória Seca (1X2)" else '📈 Odd DC' if modo == "Dupla Chance" else '📈 Odd Gol'
     top_3_jogos = sorted(dados, key=lambda x: x[chave_odd])[:3]
     if len(top_3_jogos) >= 2:
@@ -110,16 +99,10 @@ def salvar_no_sheets(dados, modo):
         for i, tj in enumerate(top_3_jogos, 1):
             palpite_multipla += f"{i}. {tj.get('🛡️ Palpite', tj.get('⚽ Linha', ''))} | "
             odd_total *= tj[chave_odd]
-        
-        linhas_para_inserir.append([
-            data_hoje, "---", "Múltipla", "Combinada", palpite_multipla, 
-            round(odd_total, 2), modo, "Múltipla", "Pendente"
-        ])
+        linhas_para_inserir.append([data_hoje, "---", "Múltipla", "Combinada", palpite_multipla, round(odd_total, 2), modo, "Múltipla", "Pendente"])
 
-    # Insere tudo na planilha
     aba.append_rows(linhas_para_inserir)
     return True
-
 
 # --- MENU LATERAL ---
 with st.sidebar:
@@ -216,8 +199,9 @@ def scan_odds_dados(chave, ligas, d_ini, d_fim, modo, min_f, max_f, min_z, min_d
                 h_br = datetime.strptime(jogo["commence_time"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc).astimezone(tz_br).strftime("%H:%M")
                 liga_nome, pais_nome = identificar_origem(jogo["sport_title"])
 
+                # --- ADICIONADO A ZEBRA E O EMPATE AQUI ---
                 if modo == "Vitória Seca (1X2)" and (min_f <= o_fav <= max_f and o_zeb >= min_z):
-                    jogos.append({"⏰ Hora": h_br, "🌍 País": pais_nome, "🏆 Liga": liga_nome, "🛡️ Palpite": f"Vitória {fav}", "📈 Odd": round(o_fav, 2), "🎯 Chance %": round(pct_fav, 1), "🦓 Zebra": zeb, "📉 Odd Zebra": round(o_zeb, 2), "🏦 Casa": site['title']})
+                    jogos.append({"⏰ Hora": h_br, "🌍 País": pais_nome, "🏆 Liga": liga_nome, "🛡️ Palpite": f"Vitória {fav}", "📈 Odd": round(o_fav, 2), "🎯 Chance %": round(pct_fav, 1), "⚖️ Empate": round(o_empate, 2), "🦓 Zebra": zeb, "📉 Odd Zebra": round(o_zeb, 2), "🏦 Casa": site['title']})
                 elif modo == "Dupla Chance" and (min_dc <= odd_dc <= max_dc):
                     jogos.append({"⏰ Hora": h_br, "🌍 País": pais_nome, "🏆 Liga": liga_nome, "🛡️ Palpite": f"{fav} ou Empate", "📈 Odd DC": round(odd_dc, 2), "🎯 Segura %": round((1/odd_dc)*100, 1), "🏦 Casa": site['title']})
                 elif modo == "Mercado de Gols (API Real)" and (min_odd_gol <= odd_gol_real <= max_odd_gol):
@@ -266,8 +250,12 @@ with tab_varredura:
                 
                 for idx, j in enumerate(st.session_state.res_pauta, 1):
                     bloco = f"🔥 <b>JOGO {idx:02d}</b>\n⏰ <b>{j['⏰ Hora']}</b> | {j['🌍 País']}\n🏆 {j['🏆 Liga']}\n\n"
+                    
+                    # --- CORRIGIDO A FORMATAÇÃO DO TELEGRAM AQUI ---
                     if modo == "Vitória Seca (1X2)":
-                        bloco += f"⭐ <b>PALPITE:</b>\n👉 <b>{j['🛡️ Palpite']}</b> (@{j['📈 Odd']:.2f})\n<code>{criar_barra(j['🎯 Chance %'])}</code> <b>{j['🎯 Chance %']:.1f}%</b>\n\n"
+                        bloco += f"⭐ <b>PALPITE:</b>\n👉 <b>{j['🛡️ Palpite']}</b> (@{j['📈 Odd']:.2f})\n<code>{criar_barra(j['🎯 Chance %'])}</code> <b>{j['🎯 Chance %']:.1f}%</b>\n"
+                        bloco += f"⚖️ Empate (@{j['⚖️ Empate']:.2f})\n"
+                        bloco += f"🦓 {j['🦓 Zebra']} (@{j['📉 Odd Zebra']:.2f})\n\n"
                     elif modo == "Dupla Chance":
                         bloco += f"🛡️ <b>PALPITE SEGURO:</b>\n👉 <b>{j['🛡️ Palpite']}</b> (@{j['📈 Odd DC']:.2f})\n<code>{criar_barra(j['🎯 Segura %'])}</code> <b>{j['🎯 Segura %']:.1f}%</b>\n\n"
                     elif modo == "Mercado de Gols (API Real)":
@@ -293,13 +281,11 @@ with tab_varredura:
 
                 msgs.append(texto)
                 
-                # Disparo Telegram
                 sucesso = True
                 for m in msgs:
                     r = requests.post(f"https://api.telegram.org/bot{t_token}/sendMessage", json={"chat_id": t_id, "text": m, "parse_mode": "HTML"})
                     if r.status_code != 200: sucesso = False; st.error(f"Erro Telegram: {r.text}")
                 
-                # Salvamento Google Sheets
                 if sucesso:
                     with st.spinner("Salvando dados na Planilha do Google..."):
                         salvo_ok = salvar_no_sheets(st.session_state.res_pauta, modo)
@@ -325,15 +311,12 @@ with tab_dashboard:
                 if df.empty:
                     st.warning("Nenhum jogo registrado neste mês ainda.")
                 else:
-                    # Filtra Resultados marcados (Onde você editou lá no Google Sheets com ✅ ou ❌)
-                    # Exemplo: O usuário pode digitar 'Green' ou 'Red' ou '✅' ou '❌'
                     greens_simples = df[(df['Tipo'] == 'Simples') & (df['Resultado'].astype(str).str.contains("Green|✅", case=False, na=False))]
                     reds_simples = df[(df['Tipo'] == 'Simples') & (df['Resultado'].astype(str).str.contains("Red|❌", case=False, na=False))]
                     
                     greens_multipla = df[(df['Tipo'] == 'Múltipla') & (df['Resultado'].astype(str).str.contains("Green|✅", case=False, na=False))]
                     reds_multipla = df[(df['Tipo'] == 'Múltipla') & (df['Resultado'].astype(str).str.contains("Red|❌", case=False, na=False))]
 
-                    # Cálculo Simples
                     qtd_green = len(greens_simples)
                     qtd_red = len(reds_simples)
                     odd_media_g = greens_simples['Odd'].astype(float).mean() if qtd_green > 0 else 0
@@ -347,7 +330,6 @@ with tab_dashboard:
                     met2.metric("📈 Odd Média Vencedora", f"@{odd_media_g:.2f}")
                     met3.metric("💰 Lucro Líquido", f"R$ {lucro_s:.2f}", "Retorno")
 
-                    # Cálculo Múltiplas
                     qtd_gm = len(greens_multipla)
                     qtd_rm = len(reds_multipla)
                     odd_media_gm = greens_multipla['Odd'].astype(float).mean() if qtd_gm > 0 else 0
