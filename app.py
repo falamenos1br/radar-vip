@@ -52,7 +52,7 @@ def identificar_origem(sport_title):
 def get_secret(key, default=""):
     try: 
         return st.secrets[key]
-    except: 
+    except Exception: 
         return default
 
 def criar_barra(pct):
@@ -72,38 +72,26 @@ with st.sidebar:
     modo_busca = st.radio("Selecione o Mercado:", ["Vitória Seca (1X2)", "Dupla Chance", "Mercado de Gols (API Real)"])
     
     st.markdown("---")
-    min_f = 0.0
-    max_f = 0.0
-    min_z = 0.0
-    min_dc = 0.0
-    max_dc = 0.0
-    min_odd_gol = 0.0
-    max_odd_gol = 0.0
+    min_f = max_f = min_z = min_dc = max_dc = min_odd_gol = max_odd_gol = 0.0
     mercado_gol = ""
     
     if modo_busca == "Vitória Seca (1X2)":
         col1, col2 = st.columns(2)
-        with col1: 
-            min_f = st.number_input("Odd Min Fav", value=1.25, step=0.05)
-        with col2: 
-            max_f = st.number_input("Odd Max Fav", value=1.75, step=0.05)
+        with col1: min_f = st.number_input("Odd Min Fav", value=1.25, step=0.05)
+        with col2: max_f = st.number_input("Odd Max Fav", value=1.75, step=0.05)
         min_z = st.number_input("Odd Mínima Zebra", value=3.50, step=0.10)
         
     elif modo_busca == "Dupla Chance":
         col3, col4 = st.columns(2)
-        with col3: 
-            min_dc = st.number_input("DC Mínima", value=1.10, step=0.02)
-        with col4: 
-            max_dc = st.number_input("DC Máxima", value=1.40, step=0.02)
+        with col3: min_dc = st.number_input("DC Mínima", value=1.10, step=0.02)
+        with col4: max_dc = st.number_input("DC Máxima", value=1.40, step=0.02)
         
     elif modo_busca == "Mercado de Gols (API Real)":
         mercado_gol = st.selectbox("Linha Exata de Gols:", ["Over 1.5", "Over 2.5", "Over 3.5", "Under 1.5", "Under 2.5", "Under 3.5"])
         st.caption("Filtre pela odd real do mercado de Gols:")
         col5, col6 = st.columns(2)
-        with col5: 
-            min_odd_gol = st.number_input("Odd Min Gol", value=1.30, step=0.05)
-        with col6: 
-            max_odd_gol = st.number_input("Odd Max Gol", value=1.80, step=0.05)
+        with col5: min_odd_gol = st.number_input("Odd Min Gol", value=1.30, step=0.05)
+        with col6: max_odd_gol = st.number_input("Odd Max Gol", value=1.80, step=0.05)
 
     st.markdown("---")
     t_token = st.text_input("Token do Bot:", value=get_secret("bot_token"), type="password")
@@ -126,47 +114,34 @@ def get_ligas(chave):
     try:
         res = requests.get(url).json()
         bloqueio = ["championship", "league_one", "league_two", "liga_2", "division_2", "bundesliga_2", "serie_b", "serie_c", "3. liga", "la liga 2"]
-        ligas_validas = []
-        for l in res:
-            k = l['key'].lower()
-            if "soccer" in k:
-                if "brazil" in k or not any(b in k for b in bloqueio):
-                    ligas_validas.append(l['key'])
-        return ligas_validas
-    except: 
+        return [l['key'] for l in res if "soccer" in l['key'].lower() and ("brazil" in l['key'].lower() or not any(b in l['key'].lower() for b in bloqueio))]
+    except Exception: 
         return []
 
 @st.cache_data(ttl=1800)
-def scan_odds(chave, ligas, d_ini, d_fim, modo, min_f, max_f, min_z, min_dc, max_dc, m_gol, min_odd_gol, max_odd_gol):
+def scan_odds_dados(chave, ligas, d_ini, d_fim, modo, min_f, max_f, min_z, min_dc, max_dc, m_gol, min_odd_gol, max_odd_gol):
     jogos = []
-    prog = st.progress(0)
-    
-    # Se for mercado de Gols, exige puxar mais dados da API (totals e alternate_totals)
+    creditos = "---"
     mercados_api = "h2h,totals,alternate_totals" if modo == "Mercado de Gols (API Real)" else "h2h"
     
-    for i, l_key in enumerate(ligas):
+    for l_key in ligas:
         url = f"https://api.the-odds-api.com/v4/sports/{l_key}/odds/?apiKey={chave}&regions=eu&markets={mercados_api}&commenceTimeFrom={d_ini}&commenceTimeTo={d_fim}"
         try:
             response = requests.get(url)
-            st.session_state.creditos_restantes = response.headers.get('x-requests-remaining', "---")
+            if 'x-requests-remaining' in response.headers:
+                creditos = response.headers['x-requests-remaining']
+                
             for jogo in response.json():
                 bks = jogo.get("bookmakers", [])
-                if not bks: 
-                    continue
-                
+                if not bks: continue
                 site = next((b for b in bks if b['key'] in ["betano", "betfair_ex_eu", "bet365"]), bks[0])
-                
-                # Isolar o mercado H2H para achar o favorito
                 h2h_market = next((m for m in site.get('markets', []) if m['key'] == 'h2h'), None)
-                if not h2h_market:
-                    continue
+                if not h2h_market: continue
                 
                 odds_h2h = {o['name']: o['price'] for o in h2h_market['outcomes']}
                 c, f = jogo['home_team'], jogo['away_team']
                 oc, of = odds_h2h.get(c, 0), odds_h2h.get(f, 0)
-                
-                if oc == 0 or of == 0:
-                    continue
+                if oc == 0 or of == 0: continue
                     
                 fav, zeb, o_fav, o_zeb = (c, f, oc, of) if oc <= of else (f, c, of, oc)
                 o_empate = next((o['price'] for o in h2h_market['outcomes'] if o['name'] == 'Draw'), 3.40)
@@ -174,96 +149,150 @@ def scan_odds(chave, ligas, d_ini, d_fim, modo, min_f, max_f, min_z, min_dc, max
                 pct_fav = (1 / o_fav) * 100
                 odd_dc = 1 / (min(96.0, pct_fav + (1 / o_empate) * 100) / 100)
                 
-                # --- LÓGICA NOVA: PUXAR ODD REAL DE GOLS DA API ---
                 odd_gol_real = 0.0
                 if modo == "Mercado de Gols (API Real)":
                     target_name = "Over" if "Over" in m_gol else "Under"
-                    target_point = float(m_gol.split()[1]) # Extrai o 1.5, 2.5 etc
-                    
+                    target_point = float(m_gol.split()[1])
                     for market in site.get('markets', []):
                         if market['key'] in ['totals', 'alternate_totals']:
                             for outcome in market.get('outcomes', []):
                                 if outcome['name'] == target_name and outcome.get('point') == target_point:
                                     odd_gol_real = outcome['price']
                                     break
-                        if odd_gol_real > 0: 
-                            break
-
+                
                 h_br = datetime.strptime(jogo["commence_time"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc).astimezone(tz_br).strftime("%H:%M")
                 liga_nome, pais_nome = identificar_origem(jogo["sport_title"])
 
-                # --- FILTROS DE APROVAÇÃO ---
+                # FILTROS
                 if modo == "Vitória Seca (1X2)" and (min_f <= o_fav <= max_f and o_zeb >= min_z):
                     jogos.append({"⏰ Hora": h_br, "🌍 País": pais_nome, "🏆 Liga": liga_nome, "🛡️ Palpite": f"Vitória {fav}", "📈 Odd": round(o_fav, 2), "🎯 Chance %": round(pct_fav, 1), "🦓 Zebra": zeb, "📉 Odd Zebra": round(o_zeb, 2), "🏦 Casa": site['title']})
-                
                 elif modo == "Dupla Chance" and (min_dc <= odd_dc <= max_dc):
                     jogos.append({"⏰ Hora": h_br, "🌍 País": pais_nome, "🏆 Liga": liga_nome, "🛡️ Palpite": f"{fav} ou Empate", "📈 Odd DC": round(odd_dc, 2), "🎯 Segura %": round((1/odd_dc)*100, 1), "🏦 Casa": site['title']})
-                
                 elif modo == "Mercado de Gols (API Real)" and (min_odd_gol <= odd_gol_real <= max_odd_gol):
                     jogos.append({"⏰ Hora": h_br, "🌍 País": pais_nome, "🏆 Liga": liga_nome, "⚽ Linha": m_gol, "📈 Odd Gol": round(odd_gol_real, 2), "📊 Chance %": round((1/odd_gol_real)*100, 1), "🛡️ Favorito": fav, "🏦 Casa": site['title']})
-                    
-        except: 
+        except Exception: 
             pass
-        prog.progress((i + 1) / len(ligas))
-    prog.empty()
-    return jogos
+            
+    return jogos, creditos
 
-if 'res_pauta' not in st.session_state: 
-    st.session_state.res_pauta = []
-if 'modo_salvo' not in st.session_state: 
-    st.session_state.modo_salvo = ""
+# --- CRIAÇÃO DAS ABAS (TABS) ---
+tab_varredura, tab_dashboard = st.tabs(["🚀 Buscar Jogos VIP", "📈 Dashboard e Simulador"])
 
-if btn_scan:
-    if not api_key: 
-        st.error("⚠️ Insira uma Chave API!")
-    else:
-        status.info(f"🔄 Buscando exclusivamente pauta de {modo_busca}...")
-        ligas_f = get_ligas(api_key)
-        resultados = scan_odds(api_key, ligas_f, ini_utc, fim_utc, modo_busca, min_f, max_f, min_z, min_dc, max_dc, mercado_gol, min_odd_gol, max_odd_gol)
-        st.session_state.res_pauta = sorted(resultados, key=lambda x: x['⏰ Hora'])
-        st.session_state.modo_salvo = modo_busca
-        if not resultados: 
-            status.warning("Nenhum jogo atendeu aos filtros rigorosos.")
-        else: 
-            status.success(f"✅ {len(resultados)} jogos encontrados!")
+with tab_varredura:
+    if 'res_pauta' not in st.session_state: st.session_state.res_pauta = []
+    if 'modo_salvo' not in st.session_state: st.session_state.modo_salvo = ""
 
-if st.session_state.res_pauta:
-    st.dataframe(pd.DataFrame(st.session_state.res_pauta), use_container_width=True, hide_index=True)
-    
-    st.markdown("<br>", unsafe_allow_html=True)
-    if st.button("📲 PUBLICAR PAUTA NO VIP"):
-        if not t_token or not t_id: 
-            st.error("⚠️ Faltam dados do Telegram!")
+    if btn_scan:
+        if not api_key: 
+            st.error("⚠️ Insira uma Chave API!")
         else:
-            modo = st.session_state.modo_salvo
-            texto = f"🎯 *RADAR VIP - {data_alvo.strftime('%d/%m')}*\n━━━━━━━━━━━━━━━━━━━━\n\n"
-            msgs = []
-            
-            for idx, j in enumerate(st.session_state.res_pauta, 1):
-                bloco = f"🔥 *JOGO {idx:02d}*\n⏰ *{j['⏰ Hora']}* | {j['🌍 País']}\n🏆 {j['🏆 Liga']}\n\n"
+            with st.spinner(f"🔄 Buscando pauta de {modo_busca} (Aguarde)..."):
+                ligas_f = get_ligas(api_key)
+                resultados, creditos = scan_odds_dados(api_key, ligas_f, ini_utc, fim_utc, modo_busca, min_f, max_f, min_z, min_dc, max_dc, mercado_gol, min_odd_gol, max_odd_gol)
                 
-                if modo == "Vitória Seca (1X2)":
-                    bloco += f"⭐ *PALPITE:*\n👉 *{j['🛡️ Palpite']}* (@{j['📈 Odd']:.2f})\n`{criar_barra(j['🎯 Chance %'])}` *{j['🎯 Chance %']:.1f}%*\n"
-                    bloco += f"🦓 {j['🦓 Zebra']} (@{j['📉 Odd Zebra']:.2f})\n\n"
-                elif modo == "Dupla Chance":
-                    bloco += f"🛡️ *PALPITE SEGURO:*\n👉 *{j['🛡️ Palpite']}* (@{j['📈 Odd DC']:.2f})\n`{criar_barra(j['🎯 Segura %'])}` *{j['🎯 Segura %']:.1f}%*\n\n"
-                elif modo == "Mercado de Gols (API Real)":
-                    bloco += f"⚽ *MERCADO DE GOLS:*\n👉 *{j['⚽ Linha']}* (@{j['📈 Odd Gol']:.2f})\n`{criar_barra(j['📊 Chance %'])}` *{j['📊 Chance %']:.1f}%*\n"
-                    bloco += f"🛡️ Favorito no jogo: {j['🛡️ Favorito']}\n\n"
+                st.session_state.creditos_restantes = creditos
+                st.session_state.res_pauta = sorted(resultados, key=lambda x: x['⏰ Hora'])
+                st.session_state.modo_salvo = modo_busca
                 
-                bloco += f"🏦 _Via {j['🏦 Casa']}_\n───────────────\n\n"
-                if len(texto + bloco) > 3500: 
-                    msgs.append(texto)
-                    texto = f"🎯 *RADAR VIP (Cont.)*\n━━━━━━━━━━━━━━━━━━━━\n\n" + bloco
+                if not resultados: 
+                    st.warning("Nenhum jogo atendeu aos filtros rigorosos.")
                 else: 
-                    texto += bloco
-            msgs.append(texto)
-            
-            sucesso = True
-            for m in msgs:
-                r = requests.post(f"https://api.telegram.org/bot{t_token}/sendMessage", json={"chat_id": t_id, "text": m, "parse_mode": "Markdown"})
-                if r.status_code != 200: 
-                    sucesso = False
-                    st.error(f"Erro Telegram: {r.text}")
-            if sucesso: 
-                st.success("✅ Pauta publicada no VIP com sucesso!")
+                    st.success(f"✅ {len(resultados)} jogos encontrados!")
+                    st.rerun() # Atualiza a tela para mostrar os créditos na barra lateral
+
+    if st.session_state.res_pauta:
+        st.dataframe(pd.DataFrame(st.session_state.res_pauta), use_container_width=True, hide_index=True)
+        
+        st.markdown("<br>", unsafe_allow_html=True)
+        if st.button("📲 PUBLICAR PAUTA NO VIP"):
+            if not t_token or not t_id: 
+                st.error("⚠️ Faltam dados do Telegram!")
+            else:
+                modo = st.session_state.modo_salvo
+                # HTML format para evitar crash do Telegram
+                texto = f"🎯 <b>RADAR VIP - {data_alvo.strftime('%d/%m')}</b>\n━━━━━━━━━━━━━━━━━━━━\n\n"
+                msgs = []
+                
+                # --- LÓGICA DA MÚLTIPLA DO DIA ---
+                chave_odd = '📈 Odd' if modo == "Vitória Seca (1X2)" else '📈 Odd DC' if modo == "Dupla Chance" else '📈 Odd Gol'
+                # Pega os 3 jogos com a menor odd (maior chance)
+                top_3_jogos = sorted(st.session_state.res_pauta, key=lambda x: x[chave_odd])[:3]
+                odd_multipla = 1.0
+                texto_multipla = "🎟️ <b>MÚLTIPLA SUGERIDA (Ouro):</b>\n"
+                
+                for idx, j in enumerate(st.session_state.res_pauta, 1):
+                    bloco = f"🔥 <b>JOGO {idx:02d}</b>\n⏰ <b>{j['⏰ Hora']}</b> | {j['🌍 País']}\n🏆 {j['🏆 Liga']}\n\n"
+                    
+                    if modo == "Vitória Seca (1X2)":
+                        bloco += f"⭐ <b>PALPITE:</b>\n👉 <b>{j['🛡️ Palpite']}</b> (@{j['📈 Odd']:.2f})\n<code>{criar_barra(j['🎯 Chance %'])}</code> <b>{j['🎯 Chance %']:.1f}%</b>\n"
+                        bloco += f"🦓 {j['🦓 Zebra']} (@{j['📉 Odd Zebra']:.2f})\n\n"
+                    elif modo == "Dupla Chance":
+                        bloco += f"🛡️ <b>PALPITE SEGURO:</b>\n👉 <b>{j['🛡️ Palpite']}</b> (@{j['📈 Odd DC']:.2f})\n<code>{criar_barra(j['🎯 Segura %'])}</code> <b>{j['🎯 Segura %']:.1f}%</b>\n\n"
+                    elif modo == "Mercado de Gols (API Real)":
+                        bloco += f"⚽ <b>MERCADO DE GOLS:</b>\n👉 <b>{j['⚽ Linha']}</b> (@{j['📈 Odd Gol']:.2f})\n<code>{criar_barra(j['📊 Chance %'])}</code> <b>{j['📊 Chance %']:.1f}%</b>\n"
+                        bloco += f"🛡️ Favorito no jogo: {j['🛡️ Favorito']}\n\n"
+                    
+                    bloco += f"🏦 <i>Via {j['🏦 Casa']}</i>\n───────────────\n\n"
+                    
+                    if len(texto + bloco) > 3500: 
+                        msgs.append(texto)
+                        texto = f"🎯 <b>RADAR VIP (Cont.)</b>\n━━━━━━━━━━━━━━━━━━━━\n\n" + bloco
+                    else: 
+                        texto += bloco
+
+                # Adicionar o bloco da múltipla no fim da última mensagem
+                if len(top_3_jogos) >= 2:
+                    for i, tj in enumerate(top_3_jogos, 1):
+                        palpite_mult = tj.get('🛡️ Palpite', tj.get('⚽ Linha'))
+                        texto_multipla += f"{i}️⃣ {tj['🏆 Liga']} - {palpite_mult}\n"
+                        odd_multipla *= tj[chave_odd]
+                    texto_multipla += f"\n📈 <b>Odd Total do Bilhete: @{odd_multipla:.2f}</b>\n───────────────\n\n"
+                    
+                    if len(texto + texto_multipla) > 3900:
+                        msgs.append(texto)
+                        texto = texto_multipla
+                    else:
+                        texto += texto_multipla
+
+                msgs.append(texto)
+                
+                sucesso = True
+                for m in msgs:
+                    # Trocado para HTML
+                    r = requests.post(f"https://api.telegram.org/bot{t_token}/sendMessage", json={"chat_id": t_id, "text": m, "parse_mode": "HTML"})
+                    if r.status_code != 200: 
+                        sucesso = False
+                        st.error(f"Erro Telegram: {r.text}")
+                if sucesso: 
+                    st.success("✅ Pauta publicada no VIP com sucesso!")
+                    # TODO: Aqui chamaremos a função de salvar no banco de dados!
+
+with tab_dashboard:
+    st.markdown("## 📊 Simulador de Lucros e Resultados")
+    st.write("Simule quanto você lucraria com base na taxa de acerto do seu radar.")
+    
+    col_stake, col_info = st.columns([1, 2])
+    with col_stake:
+        st.info("💡 Escolha o valor da aposta:")
+        valor_stake = st.number_input("Valor da Stake (R$):", min_value=0.50, value=10.00, step=0.50)
+    
+    # --- EXEMPLO DE CÁLCULO VISUAL (Até conectarmos o Banco de Dados) ---
+    st.markdown("---")
+    st.subheader(f"Desempenho Simulado com Stakes de R$ {valor_stake:.2f}")
+    
+    # Números fictícios para você ver como a tela vai ficar
+    greens = 28
+    reds = 6
+    odd_media = 1.45
+    
+    lucro_bruto = greens * (valor_stake * odd_media)
+    custo_total = (greens + reds) * valor_stake
+    lucro_liquido = lucro_bruto - custo_total
+    
+    met1, met2, met3 = st.columns(3)
+    met1.metric("✅ Greens / ❌ Reds", f"{greens} / {reds}", f"{(greens/(greens+reds))*100:.1f}% Winrate")
+    met2.metric("📈 Odd Média Ganhadora", f"@{odd_media:.2f}")
+    met3.metric("💰 Lucro Líquido Real", f"R$ {lucro_liquido:.2f}", f"Retorno" if lucro_liquido > 0 else "Prejuízo")
+
+    st.markdown("---")
+    st.warning("⚠️ **Atenção:** Os dados acima são apenas uma demonstração visual do layout. Para registrar os jogos reais enviados e checar os placares, precisamos conectar o sistema a um Banco de Dados.")
