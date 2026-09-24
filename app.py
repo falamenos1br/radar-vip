@@ -110,7 +110,9 @@ with st.sidebar:
     opcao_api = st.selectbox("🔑 Conta da API:", ["Conta 1", "Conta 2", "Conta 3", "Conta 4"])
     api_map = {"Conta 1": "api_key_1", "Conta 2": "api_key_2", "Conta 3": "api_key_3", "Conta 4": "api_key_4"}
     api_key = st.text_input("Chave API:", value=get_secret(api_map[opcao_api]), type="password")
-    data_alvo = st.date_input("📅 Data dos Jogos:", value=datetime.now().date() + timedelta(days=1))
+    
+    # CORREÇÃO 1: Definido o padrão de data para HOJE, não para amanhã.
+    data_alvo = st.date_input("📅 Data dos Jogos:", value=datetime.now().date())
     
     st.markdown("---")
     st.markdown("### 🎯 MODO DE OPERAÇÃO")
@@ -153,7 +155,6 @@ def get_ligas(chave):
     url = f"https://api.the-odds-api.com/v4/sports/?apiKey={chave}"
     try:
         res = requests.get(url).json()
-        # REMOVIDO: O bloqueio de ligas inferiores. Agora puxa QUALQUER torneio de futebol.
         return [l['key'] for l in res if "soccer" in l['key'].lower()]
     except Exception: return []
 
@@ -173,14 +174,20 @@ def scan_odds_dados(chave, ligas, d_ini, d_fim, modo, min_f, max_f, min_z, min_d
                 bks = jogo.get("bookmakers", [])
                 if not bks: continue
                 
-                # ADICIONADO: Nova hierarquia de Casas (Betano > Betfair > Bet365)
-                casas_preferidas = ["betano", "betfair_ex_eu", "bet365"]
-                bks_sorted = sorted(bks, key=lambda b: casas_preferidas.index(b['key']) if b['key'] in casas_preferidas else 999)
+                # CORREÇÃO 2 e 3: Incluí a Betfair normal (sb_uk) e limito a varredura APENAS a essas casas
+                casas_permitidas = ["betano", "betfair_sb_uk", "betfair_ex_eu", "bet365"]
+                
+                # Ordena exatamente na prioridade que você pediu
+                bks_sorted = sorted(bks, key=lambda b: casas_permitidas.index(b['key']) if b['key'] in casas_permitidas else 999)
                 
                 jogo_valido = False
                 
                 for site in bks_sorted:
                     if jogo_valido: break 
+                    
+                    # Garante que não vai pegar odds de uma casa fora do seu padrão
+                    if site['key'] not in casas_permitidas:
+                        continue
                     
                     h2h_market = next((m for m in site.get('markets', []) if m['key'] == 'h2h'), None)
                     if not h2h_market: continue
@@ -212,16 +219,19 @@ def scan_odds_dados(chave, ligas, d_ini, d_fim, modo, min_f, max_f, min_z, min_d
                     h_br = datetime.strptime(jogo["commence_time"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc).astimezone(tz_br).strftime("%H:%M")
                     liga_nome, pais_nome = identificar_origem(jogo["sport_title"])
 
+                    nome_casa = site['title']
+                    if "Betfair" in nome_casa: nome_casa = "Betfair" # Deixa limpo o nome no Telegram
+
                     if modo == "Vitória Seca (1X2)" and (min_f <= o_fav <= max_f and o_zeb >= min_z):
-                        jogos.append({"⏰ Hora": h_br, "🌍 País": pais_nome, "🏆 Liga": liga_nome, "🛡️ Palpite": f"Vitória {fav}", "📈 Odd": o_fav, "🎯 Chance %": round(pct_fav, 1), "⚖️ Empate": o_empate, "🦓 Zebra": zeb, "📉 Odd Zebra": o_zeb, "🏦 Casa": site['title']})
+                        jogos.append({"⏰ Hora": h_br, "🌍 País": pais_nome, "🏆 Liga": liga_nome, "🛡️ Palpite": f"Vitória {fav}", "📈 Odd": o_fav, "🎯 Chance %": round(pct_fav, 1), "⚖️ Empate": o_empate, "🦓 Zebra": zeb, "📉 Odd Zebra": o_zeb, "🏦 Casa": nome_casa})
                         jogo_valido = True
                         
                     elif modo == "Dupla Chance" and (min_dc <= odd_dc <= max_dc):
-                        jogos.append({"⏰ Hora": h_br, "🌍 País": pais_nome, "🏆 Liga": liga_nome, "🛡️ Palpite": f"{fav} ou Empate", "📈 Odd DC": odd_dc, "🎯 Segura %": round((1/odd_dc)*100, 1), "🏦 Casa": site['title']})
+                        jogos.append({"⏰ Hora": h_br, "🌍 País": pais_nome, "🏆 Liga": liga_nome, "🛡️ Palpite": f"{fav} ou Empate", "📈 Odd DC": odd_dc, "🎯 Segura %": round((1/odd_dc)*100, 1), "🏦 Casa": nome_casa})
                         jogo_valido = True
                         
                     elif modo == "Mercado de Gols (API Real)" and (min_odd_gol <= odd_gol_real <= max_odd_gol):
-                        jogos.append({"⏰ Hora": h_br, "🌍 País": pais_nome, "🏆 Liga": liga_nome, "⚽ Linha": m_gol, "📈 Odd Gol": odd_gol_real, "📊 Chance %": round((1/odd_gol_real)*100, 1), "🛡️ Favorito": fav, "🏦 Casa": site['title']})
+                        jogos.append({"⏰ Hora": h_br, "🌍 País": pais_nome, "🏆 Liga": liga_nome, "⚽ Linha": m_gol, "📈 Odd Gol": odd_gol_real, "📊 Chance %": round((1/odd_gol_real)*100, 1), "🛡️ Favorito": fav, "🏦 Casa": nome_casa})
                         jogo_valido = True
 
         except Exception as e: 
