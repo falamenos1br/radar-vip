@@ -111,7 +111,6 @@ with st.sidebar:
     api_map = {"Conta 1": "api_key_1", "Conta 2": "api_key_2", "Conta 3": "api_key_3", "Conta 4": "api_key_4"}
     api_key = st.text_input("Chave API:", value=get_secret(api_map[opcao_api]), type="password")
     
-    # CORREÇÃO 1: Definido o padrão de data para HOJE, não para amanhã.
     data_alvo = st.date_input("📅 Data dos Jogos:", value=datetime.now().date())
     
     st.markdown("---")
@@ -158,6 +157,14 @@ def get_ligas(chave):
         return [l['key'] for l in res if "soccer" in l['key'].lower()]
     except Exception: return []
 
+def rank_bookie(b_key):
+    # Nova hierarquia infalível: Traz as 3 preferidas primeiro, mas não descarta as outras.
+    k = b_key.lower()
+    if 'betano' in k: return 1
+    if 'betfair' in k: return 2
+    if 'bet365' in k: return 3
+    return 99 # Qualquer outra casa servirá de "estepe" se as 3 acima falharem
+
 @st.cache_data(ttl=1800)
 def scan_odds_dados(chave, ligas, d_ini, d_fim, modo, min_f, max_f, min_z, min_dc, max_dc, m_gol, min_odd_gol, max_odd_gol):
     jogos = []
@@ -174,20 +181,12 @@ def scan_odds_dados(chave, ligas, d_ini, d_fim, modo, min_f, max_f, min_z, min_d
                 bks = jogo.get("bookmakers", [])
                 if not bks: continue
                 
-                # CORREÇÃO 2 e 3: Incluí a Betfair normal (sb_uk) e limito a varredura APENAS a essas casas
-                casas_permitidas = ["betano", "betfair_sb_uk", "betfair_ex_eu", "bet365"]
-                
-                # Ordena exatamente na prioridade que você pediu
-                bks_sorted = sorted(bks, key=lambda b: casas_permitidas.index(b['key']) if b['key'] in casas_permitidas else 999)
-                
+                # Ordena as casas garantindo que Betano/Betfair/Bet365 sejam testadas primeiro
+                bks_sorted = sorted(bks, key=lambda b: rank_bookie(b['key']))
                 jogo_valido = False
                 
                 for site in bks_sorted:
                     if jogo_valido: break 
-                    
-                    # Garante que não vai pegar odds de uma casa fora do seu padrão
-                    if site['key'] not in casas_permitidas:
-                        continue
                     
                     h2h_market = next((m for m in site.get('markets', []) if m['key'] == 'h2h'), None)
                     if not h2h_market: continue
@@ -220,7 +219,7 @@ def scan_odds_dados(chave, ligas, d_ini, d_fim, modo, min_f, max_f, min_z, min_d
                     liga_nome, pais_nome = identificar_origem(jogo["sport_title"])
 
                     nome_casa = site['title']
-                    if "Betfair" in nome_casa: nome_casa = "Betfair" # Deixa limpo o nome no Telegram
+                    if "Betfair" in nome_casa: nome_casa = "Betfair"
 
                     if modo == "Vitória Seca (1X2)" and (min_f <= o_fav <= max_f and o_zeb >= min_z):
                         jogos.append({"⏰ Hora": h_br, "🌍 País": pais_nome, "🏆 Liga": liga_nome, "🛡️ Palpite": f"Vitória {fav}", "📈 Odd": o_fav, "🎯 Chance %": round(pct_fav, 1), "⚖️ Empate": o_empate, "🦓 Zebra": zeb, "📉 Odd Zebra": o_zeb, "🏦 Casa": nome_casa})
