@@ -153,8 +153,8 @@ def get_ligas(chave):
     url = f"https://api.the-odds-api.com/v4/sports/?apiKey={chave}"
     try:
         res = requests.get(url).json()
-        bloqueio = ["championship", "league_one", "league_two", "liga_2", "division_2", "bundesliga_2", "serie_b", "serie_c", "3. liga"]
-        return [l['key'] for l in res if "soccer" in l['key'].lower() and ("brazil" in l['key'].lower() or not any(b in l['key'].lower() for b in bloqueio))]
+        # REMOVIDO: O bloqueio de ligas inferiores. Agora puxa QUALQUER torneio de futebol.
+        return [l['key'] for l in res if "soccer" in l['key'].lower()]
     except Exception: return []
 
 @st.cache_data(ttl=1800)
@@ -164,49 +164,69 @@ def scan_odds_dados(chave, ligas, d_ini, d_fim, modo, min_f, max_f, min_z, min_d
     mercados_api = "h2h,totals,alternate_totals" if modo == "Mercado de Gols (API Real)" else "h2h"
     
     for l_key in ligas:
-        url = f"https://api.the-odds-api.com/v4/sports/{l_key}/odds/?apiKey={chave}&regions=eu&markets={mercados_api}&commenceTimeFrom={d_ini}&commenceTimeTo={d_fim}"
+        url = f"https://api.the-odds-api.com/v4/sports/{l_key}/odds/?apiKey={chave}&regions=eu,uk&markets={mercados_api}&commenceTimeFrom={d_ini}&commenceTimeTo={d_fim}"
         try:
             response = requests.get(url)
             if 'x-requests-remaining' in response.headers: creditos = response.headers['x-requests-remaining']
+            
             for jogo in response.json():
                 bks = jogo.get("bookmakers", [])
                 if not bks: continue
-                site = next((b for b in bks if b['key'] in ["betano", "betfair_ex_eu", "bet365"]), bks[0])
-                h2h_market = next((m for m in site.get('markets', []) if m['key'] == 'h2h'), None)
-                if not h2h_market: continue
                 
-                odds_h2h = {o['name']: o['price'] for o in h2h_market['outcomes']}
-                c, f = jogo['home_team'], jogo['away_team']
-                oc, of = odds_h2h.get(c, 0), odds_h2h.get(f, 0)
-                if oc == 0 or of == 0: continue
+                # ADICIONADO: Nova hierarquia de Casas (Betano > Betfair > Bet365)
+                casas_preferidas = ["betano", "betfair_ex_eu", "bet365"]
+                bks_sorted = sorted(bks, key=lambda b: casas_preferidas.index(b['key']) if b['key'] in casas_preferidas else 999)
+                
+                jogo_valido = False
+                
+                for site in bks_sorted:
+                    if jogo_valido: break 
                     
-                fav, zeb, o_fav, o_zeb = (c, f, oc, of) if oc <= of else (f, c, of, oc)
-                o_empate = next((o['price'] for o in h2h_market['outcomes'] if o['name'] == 'Draw'), 3.40)
-                pct_fav = (1 / o_fav) * 100
-                odd_dc = 1 / (min(96.0, pct_fav + (1 / o_empate) * 100) / 100)
-                
-                odd_gol_real = 0.0
-                if modo == "Mercado de Gols (API Real)":
-                    target_name = "Over" if "Over" in m_gol else "Under"
-                    target_point = float(m_gol.split()[1])
-                    for market in site.get('markets', []):
-                        if market['key'] in ['totals', 'alternate_totals']:
-                            for outcome in market.get('outcomes', []):
-                                if outcome['name'] == target_name and outcome.get('point') == target_point:
-                                    odd_gol_real = outcome['price']
-                                    break
-                
-                h_br = datetime.strptime(jogo["commence_time"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc).astimezone(tz_br).strftime("%H:%M")
-                liga_nome, pais_nome = identificar_origem(jogo["sport_title"])
+                    h2h_market = next((m for m in site.get('markets', []) if m['key'] == 'h2h'), None)
+                    if not h2h_market: continue
+                    
+                    odds_h2h = {o['name']: o['price'] for o in h2h_market['outcomes']}
+                    c, f = jogo['home_team'], jogo['away_team']
+                    oc, of = odds_h2h.get(c, 0), odds_h2h.get(f, 0)
+                    if oc == 0 or of == 0: continue
+                        
+                    oc, of = round(oc, 2), round(of, 2)
+                    fav, zeb, o_fav, o_zeb = (c, f, oc, of) if oc <= of else (f, c, of, oc)
+                    
+                    o_empate = round(next((o['price'] for o in h2h_market['outcomes'] if o['name'] == 'Draw'), 3.40), 2)
+                    
+                    pct_fav = (1 / o_fav) * 100
+                    odd_dc = round(1 / (min(96.0, pct_fav + (1 / o_empate) * 100) / 100), 2)
+                    
+                    odd_gol_real = 0.0
+                    if modo == "Mercado de Gols (API Real)":
+                        target_name = "Over" if "Over" in m_gol else "Under"
+                        target_point = float(m_gol.split()[1])
+                        for market in site.get('markets', []):
+                            if market['key'] in ['totals', 'alternate_totals']:
+                                for outcome in market.get('outcomes', []):
+                                    if outcome['name'] == target_name and outcome.get('point') == target_point:
+                                        odd_gol_real = round(outcome['price'], 2)
+                                        break
+                    
+                    h_br = datetime.strptime(jogo["commence_time"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc).astimezone(tz_br).strftime("%H:%M")
+                    liga_nome, pais_nome = identificar_origem(jogo["sport_title"])
 
-                # --- ADICIONADO A ZEBRA E O EMPATE AQUI ---
-                if modo == "Vitória Seca (1X2)" and (min_f <= o_fav <= max_f and o_zeb >= min_z):
-                    jogos.append({"⏰ Hora": h_br, "🌍 País": pais_nome, "🏆 Liga": liga_nome, "🛡️ Palpite": f"Vitória {fav}", "📈 Odd": round(o_fav, 2), "🎯 Chance %": round(pct_fav, 1), "⚖️ Empate": round(o_empate, 2), "🦓 Zebra": zeb, "📉 Odd Zebra": round(o_zeb, 2), "🏦 Casa": site['title']})
-                elif modo == "Dupla Chance" and (min_dc <= odd_dc <= max_dc):
-                    jogos.append({"⏰ Hora": h_br, "🌍 País": pais_nome, "🏆 Liga": liga_nome, "🛡️ Palpite": f"{fav} ou Empate", "📈 Odd DC": round(odd_dc, 2), "🎯 Segura %": round((1/odd_dc)*100, 1), "🏦 Casa": site['title']})
-                elif modo == "Mercado de Gols (API Real)" and (min_odd_gol <= odd_gol_real <= max_odd_gol):
-                    jogos.append({"⏰ Hora": h_br, "🌍 País": pais_nome, "🏆 Liga": liga_nome, "⚽ Linha": m_gol, "📈 Odd Gol": round(odd_gol_real, 2), "📊 Chance %": round((1/odd_gol_real)*100, 1), "🛡️ Favorito": fav, "🏦 Casa": site['title']})
-        except Exception: pass
+                    if modo == "Vitória Seca (1X2)" and (min_f <= o_fav <= max_f and o_zeb >= min_z):
+                        jogos.append({"⏰ Hora": h_br, "🌍 País": pais_nome, "🏆 Liga": liga_nome, "🛡️ Palpite": f"Vitória {fav}", "📈 Odd": o_fav, "🎯 Chance %": round(pct_fav, 1), "⚖️ Empate": o_empate, "🦓 Zebra": zeb, "📉 Odd Zebra": o_zeb, "🏦 Casa": site['title']})
+                        jogo_valido = True
+                        
+                    elif modo == "Dupla Chance" and (min_dc <= odd_dc <= max_dc):
+                        jogos.append({"⏰ Hora": h_br, "🌍 País": pais_nome, "🏆 Liga": liga_nome, "🛡️ Palpite": f"{fav} ou Empate", "📈 Odd DC": odd_dc, "🎯 Segura %": round((1/odd_dc)*100, 1), "🏦 Casa": site['title']})
+                        jogo_valido = True
+                        
+                    elif modo == "Mercado de Gols (API Real)" and (min_odd_gol <= odd_gol_real <= max_odd_gol):
+                        jogos.append({"⏰ Hora": h_br, "🌍 País": pais_nome, "🏆 Liga": liga_nome, "⚽ Linha": m_gol, "📈 Odd Gol": odd_gol_real, "📊 Chance %": round((1/odd_gol_real)*100, 1), "🛡️ Favorito": fav, "🏦 Casa": site['title']})
+                        jogo_valido = True
+
+        except Exception as e: 
+            pass
+            
     return jogos, creditos
 
 # --- ABAS PRINCIPAIS ---
@@ -251,7 +271,6 @@ with tab_varredura:
                 for idx, j in enumerate(st.session_state.res_pauta, 1):
                     bloco = f"🔥 <b>JOGO {idx:02d}</b>\n⏰ <b>{j['⏰ Hora']}</b> | {j['🌍 País']}\n🏆 {j['🏆 Liga']}\n\n"
                     
-                    # --- CORRIGIDO A FORMATAÇÃO DO TELEGRAM AQUI ---
                     if modo == "Vitória Seca (1X2)":
                         bloco += f"⭐ <b>PALPITE:</b>\n👉 <b>{j['🛡️ Palpite']}</b> (@{j['📈 Odd']:.2f})\n<code>{criar_barra(j['🎯 Chance %'])}</code> <b>{j['🎯 Chance %']:.1f}%</b>\n"
                         bloco += f"⚖️ Empate (@{j['⚖️ Empate']:.2f})\n"
